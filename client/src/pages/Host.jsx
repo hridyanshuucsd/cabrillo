@@ -25,6 +25,7 @@ export default function Host() {
       <div className="row wrap-row" style={{ gap: 14, alignItems: 'stretch' }}>
         <div className="card stack" style={{ flex: '1 1 320px' }}>
           <div className="label">Class session · join code</div>
+          {room && <div className="small muted">Task: {room.task} · AI: {room.aiMode === 'compare' ? 'tables alternate listening and answer-only' : room.aiMode === 'ask' ? 'answer-only' : 'listening'}</div>}
           <div className="big-code">{code}</div>
           <div className="small">Students open <strong>{link}</strong></div>
           <button className="btn small ghost" onClick={() => navigator.clipboard?.writeText(link)}>Copy link</button>
@@ -56,24 +57,26 @@ function TableCard({ t, code }) {
   return (
     <div className="card stack">
       <div className="row between"><strong>Table {t.id.slice(0, 4)}</strong><span className="chip ok">{t.stage}{t.stage !== 'done' ? ` · ${mmss(left)}` : ''}</span></div>
-      <div className="small">Plan: Study {t.plan.study} · Clubs {t.plan.clubs} · Green {t.plan.green} · Parking {t.plan.parking} (total {t.total}){t.ruleOk ? '' : ' · breaks rule'}</div>
-      {t.deal && <div className="chip ok">Deal locked</div>}
+      <div className="row wrap-row"><span className="chip">{t.task}</span><span className="chip ai">{t.mode === 'listen' ? 'Listening AI' : 'Answer-only AI'}</span>{t.mode === 'listen' && <span className="chip">{t.interjections} of 3 interjections</span>}{t.pausedBy && <span className="chip warn">Paused by {t.pausedBy}</span>}</div>
+      <div className="small"><strong>Plan so far:</strong> {t.summary}</div>
+      {t.deal && <div className="chip ok">Plan locked</div>}
+      {t.outcome && <div className="small">Limits that came up: {t.outcome.surfaced} of {t.outcome.of}{t.outcome.complete ? ` · plan works for ${t.outcome.respected} of ${t.outcome.of}` : ''}</div>}
       <div className="stack" style={{ gap: 4 }}>
         {t.players.map((p) => (
           <div key={p.pcode} className="small row between">
-            <span>{p.pcode} {p.name} · {p.role}{p.isAI ? ' (AI)' : ''}</span>
-            <span className="muted">{p.sharedAt !== null ? 'shared' : 'holding'}{p.isAI ? '' : p.accepted ? ' · accepts' : ''}{p.goalMet ? ' · goal met' : ''}</span>
+            <span>{p.pcode} {p.name}{p.isAI ? ' (AI)' : ''}</span>
+            <span className="muted">{p.msgs} msgs · {p.limitUp ? 'limit came up' : 'limit hidden'}{p.isAI ? '' : p.accepted ? ' · accepts' : ''}</span>
           </div>
         ))}
       </div>
-      <div className="chat" style={{ maxHeight: 140 }}>{t.chat.map((m) => <div key={m.id} className={`msg ${m.kind}`} style={{ fontSize: 12 }}><b>{m.name}:</b> {m.text}</div>)}</div>
+      <div className="chat" style={{ maxHeight: 160 }}>{t.chat.map((m) => <div key={m.id} className={`msg ${m.kind === "chat" ? "human" : m.kind}`} style={{ fontSize: 12 }}><b>{m.name}{m.to ? ` to ${m.to} (private)` : ''}:</b> {m.text}</div>)}</div>
       {t.pendingQuestions.length > 0 && <div className="error small">Waiting for the AI to answer: {t.pendingQuestions.map((p) => `${p.name}: "${p.text}"`).join(' | ')}</div>}
       <div className="row wrap-row">
         <button className="btn small ghost" onClick={() => send('host:advance')} disabled={t.stage === 'done'}>Next stage</button>
         <button className="btn small ghost" onClick={() => send('host:pause', { paused: !t.aiPaused })}>{t.aiPaused ? 'Resume automatic AI' : 'Run the AI myself'}</button>
       </div>
       <form className="row" onSubmit={(e) => { e.preventDefault(); if (say.trim()) { send('host:say', { text: say }); setSay(''); } }}>
-        <input type="text" className="grow" value={say} onChange={(e) => setSay(e.target.value)} placeholder="Speak as the AI Administrator" aria-label="Speak as the AI" />
+        <input type="text" className="grow" value={say} onChange={(e) => setSay(e.target.value)} placeholder="Speak as the AI" aria-label="Speak as the AI" />
         <button className="btn small dark">Send</button>
       </form>
     </div>

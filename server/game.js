@@ -1,47 +1,59 @@
 import crypto from 'node:crypto';
-import { SCENARIO, roleById, useName, totalOf, ruleOk, ruleBreaks } from './scenario.js';
+import { taskById, fieldName, optionName, planComplete } from './tasks.js';
+import { applyMessage, buildPanel, findConflict } from './listener.js';
 import { q, logEvent } from './db.js';
 import { answerQuestion } from './ai.js';
 
-const SCALE = Number(process.env.TIME_SCALE || 1); // tests run faster with TIME_SCALE=0.1
-export const DURATIONS = { brief: 60, explore: 180, negotiate: 300, reveal: 60 };
-const NEXT = { brief: 'explore', explore: 'negotiate', negotiate: 'reveal', reveal: 'done' };
-const STAGE_NAME = { brief: 'Brief', explore: 'Explore', negotiate: 'Negotiate', reveal: 'Reveal' };
+const SCALE = Number(process.env.TIME_SCALE || 1); // tests run faster with a smaller TIME_SCALE
+export const DURATIONS = { setup: 60, chat: 360, confirm: 120, wrap: 60 };
+const NEXT = { setup: 'chat', chat: 'confirm', confirm: 'wrap', wrap: 'done' };
+const STAGE_NAME = { setup: 'Set up', chat: 'Chat', confirm: 'Confirm', wrap: 'Wrap up' };
+const AI_NAMES = ['Ari', 'Kai', 'Noa', 'Remy'];
+const COLORS = ['#2a78d6', '#eb6834', '#8f5bd6', '#1baf7a', '#c2410c'];
+const MAX_INTERJECTIONS = 3; // public, unprompted AI messages per chat stage
 const sec = (s) => s * SCALE * 1000;
 const rand = (a, b) => a + Math.random() * (b - a);
 const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const ASK_AI = /(^|\s)@ai\b/i;
+const list = (names) => names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+export const firstPerson = (s) => s.replace(/told you/g, 'told me').replace(/\b[Yy]ou are\b/g, 'I am').replace(/\bYou\b/g, 'I').replace(/\byou\b/g, 'I').replace(/\bYour\b/g, 'My').replace(/\byour\b/g, 'my');
 
 export class Table {
-  constructor({ io, room, humans, onDone }) {
+  constructor({ io, room, humans, onDone, mode }) {
     this.id = crypto.randomBytes(5).toString('hex');
     this.io = io; this.room = room; this.onDone = onDone;
+    this.task = taskById(room.task);
+    this.mode = mode === 'ask' ? 'ask' : 'listen';
     this.t0 = Date.now();
     const seats = Math.min(5, Math.max(3, humans.length));
-    const roles = shuffle(SCENARIO.roles.slice(0, seats).map((r) => r.id));
+    const limits = shuffle(this.task.limits).slice(0, seats);
     this.players = humans.map((h, i) => ({
-      key: h.key, name: h.name, userId: h.userId, isGuest: h.isGuest, isAI: false,
-      roleId: roles[i], pcode: `P0${i + 1}`, sharedAt: null, ready: false, lastActive: Date.now(), prompted: false
+      key: h.key, name: h.name, userId: h.userId, isGuest: h.isGuest, isAI: false, pcode: `P0${i + 1}`, color: COLORS[i],
+      limitId: limits[i].id, limitSharedAt: null, limitMentionedAt: null, ready: false, confirmReady: false, msgs: 0, nudged: false
     }));
-    for (let i = humans.length, n = 1; i < seats; i++, n++) {
-      const role = roleById(roles[i]);
-      this.players.push({ key: `ai${n}`, name: `AI ${role.name}`, isAI: true, roleId: roles[i], pcode: `AI0${n + 1}`, sharedAt: null, nextMoveAt: 0, saidOk: false });
+    for (let i = humans.length, n = 0; i < seats; i++, n++) {
+      this.players.push({ key: `ai${n + 1}`, name: `${AI_NAMES[n]} (AI)`, isAI: true, pcode: `A0${n + 1}`, color: '#52514e',
+        limitId: limits[i].id, limitSharedAt: null, limitMentionedAt: null, msgs: 0, revealed: false });
     }
-    this.plan = { ...SCENARIO.start };
-    this.accepts = {};
+    this.prefs = {}; this.plan = {}; this.accepts = {};
     this.chat = []; this.seq = 0;
     this.stage = 'lobby'; this.stageEndsAt = null;
-    this.aiPaused = false; this.deal = null; this.outcome = null;
-    this.timers = []; this.tick = null; this.lastRuleWarn = 0; this.lastInvalidNote = 0; this.prompts = 0;
-    this.pendingQuestions = [];
+    this.aiPaused = false;   // host runs the AI by hand (Wizard of Oz)
+    this.pausedBy = null;    // a player paused the listening AI
+    this.deal = null; this.outcome = null;
+    this.timers = []; this.tick = null;
+    this.interjections = 0; this.lastInterjectAt = 0; this.didLimitsCheck = false; this.didConsensus = false;
+    this.asked = new Set(); this.pendingQuestions = [];
   }
 
   get t() { return Date.now() - this.t0; }
   log(actor, type, payload, actorType) {
     if (payload && typeof payload.text === 'string') payload = { ...payload, text: this.anonymize(payload.text) };
     if (payload && typeof payload.question === 'string') payload = { ...payload, question: this.anonymize(payload.question) };
-    logEvent(this.id, this.t, actor, actorType || (actor === 'AI' ? 'ai' : actor === 'system' ? 'system' : actor.startsWith('AI') ? 'ai' : 'human'), type, payload);
+    const type_ = actorType || (actor === 'AI' ? 'ai' : actor === 'system' ? 'system' : /^A0/.test(actor) ? 'ai_player' : 'human');
+    logEvent(this.id, this.t, actor, type_, type, payload);
   }
-  // Research logs use player codes, so display names typed into or generated in messages are replaced.
+  // Research logs use player codes, so display names typed into messages are replaced.
   anonymize(text) {
     let out = text;
     for (const p of [...this.players].sort((a, b) => b.name.length - a.name.length)) {
@@ -53,164 +65,196 @@ export class Table {
   }
   humans() { return this.players.filter((p) => !p.isAI); }
   player(key) { return this.players.find((p) => p.key === key); }
-  role(p) { return roleById(p.roleId); }
+  byCode(pcode) { return this.players.find((p) => p.pcode === pcode); }
+  limitOf(p) { return this.task.limits.find((l) => l.id === p.limitId); }
+  listening() { return this.mode === 'listen' && !this.aiPaused && !this.pausedBy; }
+  panel() { return buildPanel(this.task, this.prefs, this.players); }
 
   async start() {
     try {
-      await q('insert into sessions (id, room_code, kind, scenario) values ($1,$2,$3,$4)', [this.id, this.room.code, this.room.kind, SCENARIO.id]);
+      await q('insert into sessions (id, room_code, kind, scenario) values ($1,$2,$3,$4)', [this.id, this.room.code, this.room.kind, `${this.task.id}:${this.mode}`]);
       for (const p of this.players) {
         await q('insert into session_players (session_id, pcode, user_id, display_name, role_id, is_ai, is_guest) values ($1,$2,$3,$4,$5,$6,$7)',
-          [this.id, p.pcode, p.userId || null, p.name, p.roleId, p.isAI, !!p.isGuest]);
+          [this.id, p.pcode, p.userId || null, p.name, p.limitId, p.isAI, !!p.isGuest]);
       }
     } catch (e) { console.error('session insert failed', e.message); }
-    this.log('system', 'session_started', { room: this.room.code, kind: this.room.kind, seats: this.players.map((p) => ({ pcode: p.pcode, role: p.roleId, ai: p.isAI })) });
+    this.log('system', 'session_started', { room: this.room.code, kind: this.room.kind, task: this.task.id, ai_mode: this.mode, seats: this.players.map((p) => ({ pcode: p.pcode, limit: p.limitId, ai: p.isAI })) });
     this.tick = setInterval(() => this.onTick(), 1000);
-    this.enter('brief');
+    this.enter('setup');
   }
 
   clearStageTimers() { this.timers.forEach(clearTimeout); this.timers = []; }
+  later(seconds, fn) { this.timers.push(setTimeout(fn, sec(seconds))); }
 
   enter(stage) {
     if (this.stage === 'done') return;
     this.clearStageTimers();
     this.stage = stage;
     if (stage === 'done') { this.stageEndsAt = null; this.finish(); this.broadcast(); return; }
-    const length = sec(DURATIONS[stage]);
+    const length = DURATIONS[stage];
     this.stageStartedAt = Date.now();
-    this.stageEndsAt = Date.now() + length;
-    this.timers.push(setTimeout(() => this.enter(NEXT[stage]), length));
-    if (stage !== 'reveal') this.timers.push(setTimeout(() => this.aiSay(`30 seconds left in ${STAGE_NAME[stage]}.`, 'time_warning', { stage }), length - sec(30)));
+    this.stageEndsAt = Date.now() + sec(length);
+    this.later(length, () => this.enter(NEXT[stage]));
+    if (stage !== 'wrap') this.later(length - 30, () => this.sys(`30 seconds left in ${STAGE_NAME[stage]}.`, 'time_warning', { stage }));
     this.log('system', 'stage_started', { stage });
 
-    if (stage === 'brief') {
-      const seats = this.players.map((p) => `${p.name} (${this.role(p).name}${p.isAI ? ', AI' : ''})`).join(', ');
-      this.aiSay(`Welcome. I am the Administrator, an AI player. I keep time and the rules, and I cannot vote. At this table: ${seats}. Read your card: only you can see your goal and your private fact.`, 'room_greeting');
+    if (stage === 'setup') {
+      this.aiSay(this.mode === 'listen'
+        ? 'Hi, I am the AI for this table. I read the chat, keep the Plan so far up to date, and ask a question now and then. I cannot see your private limits and I never vote. Anyone can pause me.'
+        : 'Hi, I am the AI for this table. I only answer when someone asks me, with @AI or the Ask button. I cannot see your private limits and I never vote.', 'ai_intro', null, true);
     }
-    if (stage === 'explore') {
-      this.aiSay('Explore: 3 minutes. Switch the map layers, ask me about the lot, and decide whether to share your private fact with the table.', 'stage_intro', { stage });
-      for (const p of this.players.filter((x) => x.isAI)) {
-        if (Math.random() < 0.7) this.timers.push(setTimeout(() => this.share(p.key), rand(0.2, 0.8) * length));
+    if (stage === 'chat') {
+      this.sys(`Chat: 6 minutes. ${this.task.prompt} Decide: ${this.task.fields.map((f) => f.name.toLowerCase()).join(', ')}. Tap "Ready to confirm" when you think you agree.`, 'stage_intro', { stage });
+      this.scheduleAiPlayers();
+    }
+    if (stage === 'confirm') {
+      if (this.mode === 'listen') {
+        for (const f of this.panel()) if (f.leader) this.plan[f.id] = f.leader;
+        const filled = this.task.fields.filter((f) => this.plan[f.id]);
+        this.aiSay(filled.length
+          ? `Here is a draft from your chat: ${filled.map((f) => `${f.name}: ${optionName(this.task, f.id, this.plan[f.id])}`).join('; ')}. Change anything that is wrong, then accept.`
+          : 'I could not find a clear choice in the chat yet, so the plan starts empty. Fill in each part, then accept.', 'draft_plan', { plan: this.plan }, true);
       }
+      this.sys('Confirm: 2 minutes. Check every part of the plan and tap Accept. It locks when every person accepts a complete plan. Any change clears all accepts.', 'stage_intro', { stage });
     }
-    if (stage === 'negotiate') {
-      this.aiSay(`Negotiate: 5 minutes. Edit the shared plan with plus and minus. It must add up to 100%, and no single use may go above ${SCENARIO.maxUse}%. Tap Accept when the plan works for you. The deal locks when every human accepts.`, 'stage_intro', { stage });
-      const now = Date.now();
-      this.humans().forEach((p) => { p.lastActive = now; });
-      this.players.filter((p) => p.isAI).forEach((p, i) => { p.nextMoveAt = now + sec(rand(25, 40) + i * 12); });
-      this.warnRule(true);
-    }
-    if (stage === 'reveal') this.reveal();
+    if (stage === 'wrap') this.wrapUp();
     this.broadcast();
   }
 
-  reveal() {
+  wrapUp() {
+    const plan = this.deal ? this.deal.plan : this.plan;
     const cut = this.deal ? this.deal.t : Infinity;
-    const shared = this.players.filter((p) => p.sharedAt !== null && p.sharedAt <= cut).length;
-    this.outcome = { deal: !!this.deal, sharedBeforeDeal: shared, of: this.players.length };
-    this.log('system', 'cards_revealed', this.outcome);
-    this.aiSay(this.deal
-      ? `Deal reached. ${shared} of ${this.players.length} private facts were shared before the deal. Look at what everyone was holding.`
-      : `Time is up without a deal. ${shared} of ${this.players.length} private facts were shared. Look at what everyone was holding.`, 'reveal_summary', null, true);
+    const surfaced = this.players.filter((p) => { const t = Math.min(p.limitSharedAt ?? Infinity, p.limitMentionedAt ?? Infinity); return t <= cut; }).length;
+    const complete = planComplete(this.task, plan);
+    const respected = complete ? this.players.filter((p) => !this.limitOf(p).violates(plan)).length : 0;
+    this.outcome = { deal: !!this.deal, surfaced, respected, complete, of: this.players.length, mode: this.mode, interjections: this.interjections };
+    this.log('system', 'session_outcome', { ...this.outcome, plan });
+    const n = this.players.length;
+    this.sys(this.deal
+      ? `Plan locked. ${surfaced} of ${n} private limits came up before the deal, and the plan works for ${respected} of ${n} people.`
+      : `Time is up without a locked plan. ${surfaced} of ${n} private limits came up in the chat.`, 'wrap_summary');
   }
 
   async finish() {
     clearInterval(this.tick); this.clearStageTimers();
     this.log('system', 'session_ended', { outcome: this.deal ? 'deal' : 'no_deal' });
     try {
-      await q('update sessions set ended_at=now(), outcome=$2, final_plan=$3 where id=$1', [this.id, this.deal ? 'deal' : 'no_deal', JSON.stringify(this.plan)]);
+      await q('update sessions set ended_at=now(), outcome=$2, final_plan=$3 where id=$1', [this.id, this.deal ? 'deal' : 'no_deal', JSON.stringify({ plan: this.deal ? this.deal.plan : this.plan, ...this.outcome })]);
     } catch (e) { console.error(e.message); }
     this.onDone?.(this);
   }
 
   pushChat(msg) {
     this.chat.push({ id: ++this.seq, t: this.t, ...msg });
-    if (this.chat.length > 200) this.chat.shift();
+    if (this.chat.length > 300) this.chat.shift();
   }
-
-  aiSay(text, type, payload, force) {
+  sys(text, type, payload) {
     if (this.stage === 'done') return;
-    if (this.aiPaused && !force) return; // Wizard of Oz mode: a teammate speaks for the AI
-    this.pushChat({ from: 'AI', name: 'Administrator (AI)', kind: 'ai', text });
-    this.log('AI', type, { text, ...(payload || {}) });
+    this.pushChat({ from: 'system', name: 'Cabrillo', kind: 'system', text });
+    this.log('system', type, { text, ...(payload || {}) });
     this.broadcast();
+  }
+  // to: a player key for a private message that only that person sees.
+  aiSay(text, type, payload, force, to) {
+    if (this.stage === 'done') return false;
+    if (this.aiPaused && !force) return false;
+    this.pushChat({ from: 'AI', name: 'AI', kind: to ? 'private' : 'ai', text, to: to || null });
+    this.log('AI', type, { text, ...(payload || {}), ...(to ? { to: this.player(to)?.pcode } : {}) });
+    this.broadcast();
+    return true;
   }
 
   // ---------- player actions ----------
-  touch(p) { if (p && !p.isAI) p.lastActive = Date.now(); }
-
   ready(key) {
-    const p = this.player(key); if (!p || this.stage !== 'brief' || p.ready) return;
+    const p = this.player(key); if (!p || p.isAI || this.stage !== 'setup' || p.ready) return;
     p.ready = true; this.log(p.pcode, 'ready_clicked');
-    if (this.humans().every((h) => h.ready)) { this.log('system', 'stage_ended_early', { stage: 'brief' }); this.enter('explore'); return; }
+    if (this.humans().every((h) => h.ready)) { this.log('system', 'stage_ended_early', { stage: 'setup' }); this.enter('chat'); return; }
     this.broadcast();
   }
 
-  share(key) {
+  confirmReady(key) {
+    const p = this.player(key); if (!p || p.isAI || this.stage !== 'chat' || p.confirmReady) return;
+    p.confirmReady = true; this.log(p.pcode, 'ready_to_confirm');
+    if (this.humans().every((h) => h.confirmReady)) { this.log('system', 'stage_ended_early', { stage: 'chat' }); this.enter('confirm'); return; }
+    this.broadcast();
+  }
+
+  shareLimit(key) {
     const p = this.player(key);
-    if (!p || p.sharedAt !== null || !['brief', 'explore', 'negotiate'].includes(this.stage)) return;
-    p.sharedAt = this.t; this.touch(p);
-    const r = this.role(p);
-    this.pushChat({ from: p.pcode, name: p.name, kind: 'fact', text: r.fact, role: r.name });
-    this.log(p.pcode, 'fact_shared', { fact_id: r.factId, stage: this.stage });
+    if (!p || p.limitSharedAt !== null || !['setup', 'chat', 'confirm'].includes(this.stage)) return;
+    p.limitSharedAt = this.t; p.msgs++;
+    this.pushChat({ from: p.pcode, name: p.name, kind: 'limit', text: firstPerson(this.limitOf(p).text) });
+    this.log(p.pcode, 'limit_shared', { limit: p.limitId, stage: this.stage });
     this.broadcast();
   }
 
   say(key, text) {
     const p = this.player(key); text = String(text || '').trim().slice(0, 300);
     if (!p || !text || this.stage === 'done') return;
-    this.touch(p);
+    if (ASK_AI.test(text)) return this.ask(key, text);
+    p.msgs++; p.lastMsgAt = Date.now();
     this.pushChat({ from: p.pcode, name: p.name, kind: 'chat', text });
-    this.log(p.pcode, 'chat_message', { text, stage: this.stage });
+    this.log(p.pcode, 'chat_message', { text, stage: this.stage, length: text.length });
+    this.read(p, text);
     this.broadcast();
+  }
+
+  // What the listening AI takes from a message. Limit mentions are logged in both modes for analysis.
+  read(p, text) {
+    const lim = this.limitOf(p);
+    if (p.limitMentionedAt === null && lim.re.test(text)) { p.limitMentionedAt = this.t; this.log(p.pcode, 'limit_mentioned', { limit: p.limitId, stage: this.stage }); }
+    if (this.stage !== 'chat' && this.stage !== 'setup') return;
+    if (this.mode === 'listen' && this.pausedBy) return; // paused: the AI does not read new messages
+    const changes = applyMessage(this.task, this.prefs, p.pcode, text);
+    // Parsed in both modes so the two conditions can be compared; only the listening AI shows it to players.
+    if (changes.length) this.log(this.mode === 'listen' ? 'AI' : 'system', this.mode === 'listen' ? 'panel_update' : 'chat_parsed', { from: p.pcode, changes: changes.map((c) => ({ field: c.field, option: c.option, kind: c.kind })) });
   }
 
   async ask(key, text) {
-    const p = this.player(key); text = String(text || '').trim().slice(0, 300);
-    if (!p || !text || !['brief', 'explore', 'negotiate'].includes(this.stage)) return;
-    this.touch(p);
+    const p = this.player(key); text = String(text || '').replace(ASK_AI, ' ').trim().slice(0, 300);
+    if (!p || !text || this.stage === 'done' || this.stage === 'wrap') return;
+    p.msgs++;
     this.pushChat({ from: p.pcode, name: p.name, kind: 'question', text });
     this.log(p.pcode, 'question_asked', { text, stage: this.stage });
+    this.read(p, text);
     if (this.aiPaused) { this.pendingQuestions.push({ pcode: p.pcode, name: p.name, text }); this.broadcast(); return; }
     this.broadcast();
-    const ctx = {
-      stage: this.stage, plan: this.plan, secondsLeft: Math.max(0, Math.round((this.stageEndsAt - Date.now()) / 1000)),
-      shared: this.players.filter((x) => x.sharedAt !== null).map((x) => ({ role: this.role(x).name, fact: this.role(x).fact }))
-    };
-    const a = await answerQuestion(text, ctx);
-    this.aiSay(a.text, 'ai_answer', { source: a.source, question: text, to: p.pcode });
+    const recent = this.chat.filter((m) => !m.to && ['chat', 'question', 'limit'].includes(m.kind)).slice(-12).map((m) => `${this.byCode(m.from)?.pcode || m.from}: ${this.anonymize(m.text)}`).join('\n');
+    const a = await answerQuestion(text, { task: this.task, stage: this.stage, secondsLeft: this.secondsLeft(), summary: this.summaryText(), recent });
+    this.aiSay(a.text, 'ai_answer', { source: a.source, question: text, to_player: p.pcode });
   }
 
-  edit(key, use, delta) {
+  pauseAI(key, paused) {
+    const p = this.player(key); if (!p || p.isAI || this.mode !== 'listen' || this.stage === 'done') return;
+    paused = !!paused;
+    if (paused === !!this.pausedBy) return;
+    this.pausedBy = paused ? p.pcode : null;
+    this.log(p.pcode, 'ai_paused_by_player', { paused });
+    this.sys(paused ? `${p.name} paused the AI. It will not read or post until someone resumes it.` : `${p.name} resumed the AI.`, 'ai_pause_notice', { paused });
+  }
+
+  setField(key, field, option) {
     const p = this.player(key);
-    if (!p || this.stage !== 'negotiate' || this.deal) return false;
-    if (!SCENARIO.uses.some((u) => u.id === use) || ![SCENARIO.step, -SCENARIO.step].includes(delta)) return false;
-    const from = this.plan[use], to = from + delta;
-    if (to < 0 || to > 100 || (delta > 0 && totalOf(this.plan) + delta > SCENARIO.total)) return false;
-    this.plan = { ...this.plan, [use]: to };
-    this.touch(p);
-    const hadAccepts = Object.values(this.accepts).some(Boolean);
+    if (!p || p.isAI || this.stage !== 'confirm' || this.deal) return;
+    const f = this.task.fields.find((x) => x.id === field);
+    if (!f || !f.options.some((x) => x.id === option) || this.plan[field] === option) return;
+    const from = this.plan[field] || null;
+    this.plan = { ...this.plan, [field]: option };
+    const had = Object.values(this.accepts).some(Boolean);
     this.accepts = {};
-    this.log(p.pcode, 'proposal_edit', { use, from, to, total: totalOf(this.plan), plan: this.plan });
-    if (hadAccepts) this.log('system', 'accepts_reset');
-    this.warnRule(false);
+    this.log(p.pcode, 'plan_edit', { field, from, to: option, plan: this.plan });
+    if (had) this.log('system', 'accepts_reset');
     this.broadcast();
-    return true;
   }
 
   accept(key, value) {
     const p = this.player(key);
-    if (!p || p.isAI || this.stage !== 'negotiate' || this.deal) return;
-    this.accepts[key] = !!value; this.touch(p);
-    const r = this.role(p);
-    this.log(p.pcode, 'vote', { value: !!value, goal_met: r.check(this.plan), plan: this.plan });
-    const humans = this.humans();
-    if (humans.every((h) => this.accepts[h.key])) {
-      if (totalOf(this.plan) === SCENARIO.total && ruleOk(this.plan)) return this.lockDeal();
-      if (Date.now() - this.lastInvalidNote > 5000) {
-        this.lastInvalidNote = Date.now();
-        const why = totalOf(this.plan) !== SCENARIO.total ? `the plan adds up to ${totalOf(this.plan)}%, not 100%` : `${ruleBreaks(this.plan).map((u) => u.name).join(' and ')} is above ${SCENARIO.maxUse}%`;
-        this.aiSay(`Everyone accepted, but the deal cannot lock because ${why}.`, 'invalid_deal', { plan: this.plan });
-      }
+    if (!p || p.isAI || this.stage !== 'confirm' || this.deal) return;
+    this.accepts[key] = !!value;
+    this.log(p.pcode, 'vote', { value: !!value, plan: this.plan, limit_ok: planComplete(this.task, this.plan) ? !this.limitOf(p).violates(this.plan) : null });
+    if (this.humans().every((h) => this.accepts[h.key])) {
+      if (planComplete(this.task, this.plan)) return this.lockDeal();
+      this.sys(`Everyone accepted, but the plan is missing: ${this.task.fields.filter((f) => !this.plan[f.id]).map((f) => f.name).join(', ')}.`, 'incomplete_plan');
     }
     this.broadcast();
   }
@@ -218,48 +262,87 @@ export class Table {
   lockDeal() {
     this.deal = { plan: { ...this.plan }, t: this.t };
     this.log('system', 'deal_locked', { plan: this.plan, accepted_by: this.humans().map((h) => h.pcode) });
-    this.aiSay(`Deal locked: ${SCENARIO.uses.map((u) => `${u.name} ${this.plan[u.id]}%`).join(', ')}. Revealing all cards.`, 'deal_summary', null, true);
+    this.sys(`Plan locked: ${this.task.fields.map((f) => optionName(this.task, f.id, this.plan[f.id])).join(', ')}.`, 'deal_summary');
     this.clearStageTimers();
-    this.timers.push(setTimeout(() => this.enter('reveal'), 2500));
+    this.timers.push(setTimeout(() => this.enter('wrap'), 2500));
     this.broadcast();
   }
 
-  warnRule(force) {
-    const b = ruleBreaks(this.plan);
-    if (!b.length || (!force && Date.now() - this.lastRuleWarn < sec(20))) return;
-    this.lastRuleWarn = Date.now();
-    this.aiSay(`Rule check: ${b.map((u) => `${u.name} is at ${this.plan[u.id]}%`).join(', ')}, above the ${SCENARIO.maxUse}% limit.`, 'rule_warning', { breaks: b.map((u) => u.id), plan: this.plan });
+  // ---------- the listening AI ----------
+  summaryText() {
+    const parts = this.panel().map((f) => {
+      if (f.status === 'open') return `${f.name}: not discussed yet`;
+      if (f.status === 'agreed') return `${f.name}: ${optionName(this.task, f.id, f.leader)} (most agree)`;
+      return `${f.name}: ${f.options.map((o) => `${o.name} (${o.who.length})`).join(' or ')}`;
+    });
+    return parts.join('; ') + '.';
+  }
+  names(pcodes) { return pcodes.map((c) => this.byCode(c)?.name || c); }
+
+  interject(text, type, payload) {
+    if (this.aiSay(text, type, payload)) { this.interjections++; this.lastInterjectAt = Date.now(); }
   }
 
-  // ---------- AI players and quiet prompts ----------
+  listen() {
+    const now = Date.now(), elapsed = now - this.stageStartedAt;
+    // Quiet people get a private invitation, never a public call-out.
+    if (elapsed > sec(120) && this.humans().length > 1) {
+      for (const h of this.humans()) {
+        if (h.nudged || h.msgs > 0) continue;
+        h.nudged = true;
+        this.aiSay('You have not said much yet. If you have a preference or a limit, the group would want to know. No pressure.', 'ai_nudge_private', null, false, h.key);
+      }
+    }
+    if (this.interjections >= MAX_INTERJECTIONS || elapsed < sec(45) || now - this.lastInterjectAt < sec(60)) return;
+    const panel = this.panel();
+    const anyLimit = this.players.some((p) => p.limitSharedAt !== null || p.limitMentionedAt !== null);
+    if (!this.didLimitsCheck && !anyLimit && (panel.some((f) => f.status === 'agreed' || f.status === 'leaning') || elapsed > sec(120))) {
+      this.didLimitsCheck = true;
+      this.interject('Before anything is settled: does anyone have a day, budget, or travel limit the group should know about?', 'limits_check');
+      this.aiPlayersRespondToLimits();
+      return;
+    }
+    const c = findConflict(panel.filter((f) => !this.asked.has(`conflict:${f.id}`)));
+    if (c) {
+      this.asked.add(`conflict:${c.field.id}`);
+      const a = this.names(c.a.who), b = this.names(c.b.who);
+      this.interject(`For ${c.field.name.toLowerCase()}, ${list(a)} ${a.length > 1 ? 'prefer' : 'prefers'} ${c.a.name}, and ${list(b)} ${b.length > 1 ? 'prefer' : 'prefers'} ${c.b.name}. What would make one of these work for everyone?`, 'conflict', { field: c.field.id, a: c.a.option, b: c.b.option });
+      return;
+    }
+    const open = panel.find((f) => f.status === 'open' && !this.asked.has(`open:${f.id}`));
+    if (open && elapsed > sec(150)) {
+      this.asked.add(`open:${open.id}`);
+      this.interject(`Nobody has talked about ${open.name.toLowerCase()} yet. What does the group think?`, 'open_question', { field: open.id });
+      return;
+    }
+    if (!this.didConsensus && panel.every((f) => f.status === 'agreed')) {
+      this.didConsensus = true;
+      this.interject(`It sounds like most of you agree: ${panel.map((f) => optionName(this.task, f.id, f.leader)).join(', ')}. If that is right, tap "Ready to confirm".`, 'consensus_check');
+    }
+  }
+
+  // ---------- AI players (fill empty seats in Play now) ----------
+  scheduleAiPlayers() {
+    this.players.filter((p) => p.isAI).forEach((p, i) => {
+      const prefs = Object.entries(this.limitOf(p).aiPrefs);
+      const [f1, o1] = prefs[0];
+      this.later(rand(10, 25) + i * 8, () => this.stage === 'chat' && this.say(p.key, `I would like ${optionName(this.task, f1, o1)} for ${fieldName(this.task, f1).toLowerCase()}.`));
+      if (prefs[1]) { const [f2, o2] = prefs[1]; this.later(rand(70, 110) + i * 10, () => this.stage === 'chat' && this.say(p.key, `${optionName(this.task, f2, o2)} works best for me.`)); }
+      if (Math.random() < 0.4) this.later(rand(150, 240), () => this.aiPlayerReveal(p));
+    });
+  }
+  aiPlayersRespondToLimits() {
+    this.players.filter((p) => p.isAI).forEach((p, i) => { if (Math.random() < 0.85) this.later(4 + i * 5, () => this.aiPlayerReveal(p)); });
+  }
+  aiPlayerReveal(p) {
+    if (p.revealed || this.stage !== 'chat') return;
+    p.revealed = true;
+    this.say(p.key, this.limitOf(p).say);
+  }
+
   onTick() {
-    if (this.stage !== 'negotiate' || this.deal) return;
-    const now = Date.now();
-    for (const p of this.players.filter((x) => x.isAI)) {
-      if (now < p.nextMoveAt) continue;
-      p.nextMoveAt = now + sec(rand(30, 45));
-      const r = this.role(p);
-      if (r.check(this.plan)) { if (!p.saidOk) { p.saidOk = true; this.say(p.key, 'This plan works for my role.'); } continue; }
-      const target = r.target;
-      if (totalOf(this.plan) >= SCENARIO.total) {
-        const donor = SCENARIO.uses.filter((u) => u.id !== target && this.plan[u.id] >= SCENARIO.step)
-          .sort((a, b) => this.plan[b.id] - this.plan[a.id])[0];
-        if (!donor) continue;
-        this.say(p.key, `${r.aiLine} I will move 10 from ${donor.name.toLowerCase()}.`);
-        this.edit(p.key, donor.id, -SCENARIO.step);
-      } else {
-        this.say(p.key, r.aiLine);
-      }
-      this.edit(p.key, target, SCENARIO.step);
-    }
-    // Invite one quiet human in, at most twice per session.
-    if (this.prompts < 2 && now - this.stageStartedAt > sec(90) && this.humans().length > 1) {
-      const quiet = this.humans().find((h) => !h.prompted && now - h.lastActive > sec(100));
-      if (quiet) {
-        quiet.prompted = true; this.prompts++;
-        this.aiSay(`${quiet.name}, we have not heard from you in a while. Is there anything you would like to add?`, 'quiet_prompt', { target: quiet.pcode });
-      }
-    }
+    if (this.stage === 'chat' && this.mode === 'listen' && this.listening()) this.listen();
+    if (this.stage === 'chat' || this.stage === 'confirm') this.broadcast(); // keeps panels and counts fresh
   }
 
   // ---------- host controls (Wizard of Oz) ----------
@@ -272,47 +355,55 @@ export class Table {
   hostSay(text) {
     text = String(text || '').trim().slice(0, 300); if (!text) return;
     this.pendingQuestions = [];
-    this.pushChat({ from: 'AI', name: 'Administrator (AI)', kind: 'ai', text });
+    this.pushChat({ from: 'AI', name: 'AI', kind: 'ai', text });
     this.log('AI', 'ai_message_wizard', { text }, 'wizard');
     this.broadcast();
   }
 
   // ---------- views ----------
   secondsLeft() { return this.stageEndsAt ? Math.max(0, Math.round((this.stageEndsAt - Date.now()) / 1000)) : 0; }
+  panelView() {
+    return this.panel().map((f) => ({ ...f, leaderName: f.leader ? optionName(this.task, f.id, f.leader) : null, options: f.options.map((o) => ({ ...o, who: this.names(o.who) })) }));
+  }
 
   viewFor(key) {
     const me = this.player(key);
-    const open = this.stage === 'reveal' || this.stage === 'done';
+    const open = this.stage === 'wrap' || this.stage === 'done';
+    const final = this.deal ? this.deal.plan : this.plan;
     return {
-      id: this.id, stage: this.stage, stageEndsAt: this.stageEndsAt, serverNow: Date.now(),
+      id: this.id, stage: this.stage, stageEndsAt: this.stageEndsAt, serverNow: Date.now(), mode: this.mode,
       durations: Object.fromEntries(Object.entries(DURATIONS).map(([k, v]) => [k, v * SCALE])),
-      scenario: { title: SCENARIO.title, place: SCENARIO.place, question: SCENARIO.question, uses: SCENARIO.uses, layers: SCENARIO.layers, maxUse: SCENARIO.maxUse, step: SCENARIO.step },
-      plan: this.plan, total: totalOf(this.plan), ruleOk: ruleOk(this.plan), breaks: ruleBreaks(this.plan).map((u) => u.id),
+      task: { id: this.task.id, title: this.task.title, short: this.task.short, prompt: this.task.prompt, fields: this.task.fields.map((f) => ({ id: f.id, name: f.name, options: f.options.map((x) => ({ id: x.id, name: x.name })) })) },
       me: me ? {
-        pcode: me.pcode, name: me.name, ready: me.ready, sharedAt: me.sharedAt, accepted: !!this.accepts[key],
-        role: { id: me.roleId, ...pick(this.role(me), ['name', 'initial', 'color', 'goal', 'fact']), goalMet: this.role(me).check(this.plan) }
+        pcode: me.pcode, name: me.name, ready: me.ready, confirmReady: me.confirmReady, accepted: !!this.accepts[key],
+        limit: { text: this.limitOf(me).text, sharedAt: me.limitSharedAt, mentionedAt: me.limitMentionedAt, ok: planComplete(this.task, final) ? !this.limitOf(me).violates(final) : null }
       } : null,
       players: this.players.map((p) => {
-        const r = this.role(p), mine = p.key === key;
+        const mine = p.key === key;
         return {
-          pcode: p.pcode, name: p.name, isAI: p.isAI, isYou: mine, role: r.name, initial: r.initial, color: r.color,
-          ready: !!p.ready, accepted: !!this.accepts[p.key], sharedAt: p.sharedAt,
-          fact: mine || open || p.sharedAt !== null ? r.fact : null,
-          goal: mine || open ? r.goal : null,
-          goalMet: mine || open ? r.check(open && this.deal ? this.deal.plan : this.plan) : null
+          pcode: p.pcode, name: p.name, isAI: p.isAI, isYou: mine, color: p.color, initial: p.isAI ? 'AI' : p.name.slice(0, 1).toUpperCase(),
+          ready: !!p.ready, confirmReady: !!p.confirmReady, accepted: !!this.accepts[p.key], msgs: p.msgs,
+          limitSharedAt: p.limitSharedAt, limitMentionedAt: mine || open ? p.limitMentionedAt : null,
+          limit: mine || open || p.limitSharedAt !== null ? this.limitOf(p).text : null,
+          limitOk: open && planComplete(this.task, final) ? !this.limitOf(p).violates(final) : null
         };
       }),
-      chat: this.chat.slice(-80), deal: this.deal, outcome: this.outcome,
-      aiPaused: this.aiPaused, surveyUrl: this.room.surveyUrl || null, roomCode: this.room.code, kind: this.room.kind
+      panel: this.mode === 'listen' ? this.panelView() : null,
+      quiet: this.mode === 'listen' && this.stage === 'chat' ? this.humans().filter((h) => h.msgs === 0).map((h) => h.name) : [],
+      plan: this.plan, complete: planComplete(this.task, this.plan), deal: this.deal, outcome: this.outcome,
+      chat: this.chat.filter((m) => !m.to || m.to === key).slice(-80).map(({ to, ...m }) => m),
+      aiPaused: this.aiPaused, pausedBy: this.pausedBy ? this.byCode(this.pausedBy)?.name : null,
+      surveyUrl: this.room.surveyUrl || null, roomCode: this.room.code, kind: this.room.kind
     };
   }
 
   hostView() {
     return {
       id: this.id, stage: this.stage, stageEndsAt: this.stageEndsAt, serverNow: Date.now(), secondsLeft: this.secondsLeft(),
-      plan: this.plan, total: totalOf(this.plan), ruleOk: ruleOk(this.plan), aiPaused: this.aiPaused, deal: this.deal, outcome: this.outcome,
-      players: this.players.map((p) => ({ pcode: p.pcode, name: p.name, isAI: p.isAI, role: this.role(p).name, accepted: !!this.accepts[p.key], sharedAt: p.sharedAt, goalMet: this.role(p).check(this.plan) })),
-      chat: this.chat.slice(-10), pendingQuestions: this.pendingQuestions
+      mode: this.mode, task: this.task.short, summary: this.summaryText(), plan: this.plan, deal: this.deal, outcome: this.outcome,
+      aiPaused: this.aiPaused, pausedBy: this.pausedBy, interjections: this.interjections,
+      players: this.players.map((p) => ({ pcode: p.pcode, name: p.name, isAI: p.isAI, msgs: p.msgs, accepted: !!this.accepts[p.key], limitUp: p.limitSharedAt !== null || p.limitMentionedAt !== null })),
+      chat: this.chat.slice(-12).map((m) => ({ ...m, to: m.to ? this.player(m.to)?.name : null })), pendingQuestions: this.pendingQuestions
     };
   }
 
@@ -321,6 +412,3 @@ export class Table {
     this.io.to(`host:${this.room.code}`).emit('host:table', this.hostView());
   }
 }
-
-function pick(o, keys) { return Object.fromEntries(keys.map((k) => [k, o[k]])); }
-export { useName };

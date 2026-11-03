@@ -67,6 +67,9 @@ export async function migrate() {
       created_at timestamptz not null default now(),
       primary key (session_id, pcode)
     );
+    alter table rooms add column if not exists task text;
+    alter table rooms add column if not exists ai_mode text;
+    alter table feedback add column if not exists ai_amount text;
   `);
 }
 

@@ -55,11 +55,11 @@ export default function Room({ quick }) {
           <div className="card stack">
             <div className="row between"><h2 style={{ margin: 0 }}>Here now</h2><span className="chip">{state?.waiting.length || 0}</span></div>
             {(state?.waiting || []).map((w, i) => <div key={i} className="player-row">{w.name}{w.name === me?.name ? ' (you)' : ''}</div>)}
-            {!quick && !isOwner && <p className="small muted">The game starts when the host presses Start.</p>}
+            {!quick && !isOwner && <p className="small muted">The session starts when the host presses Start.</p>}
           </div>
           {!quick && isOwner && (
             <button className="btn block" onClick={async () => { const r = await emit('room:start', { code }); if (r.error) setError(r.error); }}>
-              Start {state?.waiting.length < 3 ? 'with AI players filling empty seats' : 'the game'}
+              Start {state?.waiting.length < 3 ? 'with AI players filling empty seats' : 'the session'}
             </button>
           )}
         </>

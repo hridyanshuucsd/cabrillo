@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { q } from './db.js';
 import { Table } from './game.js';
+import { DEFAULT_TASK } from './tasks.js';
 
 const SCALE = Number(process.env.TIME_SCALE || 1);
 const FILL_AFTER = Number(process.env.FILL_AFTER_SECONDS || 60) * 1000; // Play now: AI fills empty seats after this wait
@@ -26,25 +27,26 @@ export class Lobby {
     setInterval(() => this.checkQuick(), 1000);
   }
 
-  blankRoom(code, kind, ownerKey, surveyUrl) {
-    return { code, kind, ownerKey, surveyUrl, waiting: new Map(), tableIds: [], gatherTimer: null };
+  blankRoom(code, kind, ownerKey, surveyUrl, task, aiMode) {
+    return { code, kind, ownerKey, surveyUrl, task: task || DEFAULT_TASK, aiMode: aiMode || 'listen', tablesMade: 0, waiting: new Map(), tableIds: [], gatherTimer: null };
   }
 
-  async createRoom(kind, owner, surveyUrl) {
+  async createRoom(kind, owner, surveyUrl, task, aiMode) {
     let code;
     do { code = Array.from(crypto.randomBytes(5), (b) => ALPHABET[b % ALPHABET.length]).join(''); } while (this.rooms.has(code));
-    const room = this.blankRoom(code, kind, owner.key, surveyUrl || null);
+    const room = this.blankRoom(code, kind, owner.key, surveyUrl || null, task, aiMode);
     this.rooms.set(code, room);
-    await q('insert into rooms (code, owner_key, kind, survey_url) values ($1,$2,$3,$4)', [code, owner.key, kind, surveyUrl || null]);
+    await q('insert into rooms (code, owner_key, kind, survey_url, task, ai_mode) values ($1,$2,$3,$4,$5,$6)', [code, owner.key, kind, surveyUrl || null, room.task, room.aiMode]);
     return room;
   }
 
   async getRoom(code) {
     code = String(code || '').toUpperCase().trim();
     if (this.rooms.has(code)) return this.rooms.get(code);
-    const r = await q('select code, owner_key, kind, survey_url from rooms where code=$1', [code]);
+    const r = await q('select code, owner_key, kind, survey_url, task, ai_mode from rooms where code=$1', [code]);
     if (!r.rows[0]) return null;
-    const room = this.blankRoom(r.rows[0].code, r.rows[0].kind, r.rows[0].owner_key, r.rows[0].survey_url);
+    const row = r.rows[0];
+    const room = this.blankRoom(row.code, row.kind, row.owner_key, row.survey_url, row.task, row.ai_mode);
     this.rooms.set(room.code, room);
     return room;
   }
@@ -87,9 +89,9 @@ export class Lobby {
 
   roomState(room) {
     return {
-      code: room.code, kind: room.kind, ownerKey: room.ownerKey, surveyUrl: room.surveyUrl,
+      code: room.code, kind: room.kind, ownerKey: room.ownerKey, surveyUrl: room.surveyUrl, task: room.task, aiMode: room.aiMode,
       waiting: [...room.waiting.values()].map((w) => ({ name: w.name })),
-      tables: room.tableIds.map((id) => this.tables.get(id)).filter(Boolean).map((t) => ({ id: t.id, stage: t.stage, size: t.players.length }))
+      tables: room.tableIds.map((id) => this.tables.get(id)).filter(Boolean).map((t) => ({ id: t.id, stage: t.stage, size: t.players.length, mode: t.mode }))
     };
   }
   emitRoom(room) { this.io.to(`room:${room.code}`).emit('room:state', this.roomState(room)); }
@@ -110,7 +112,10 @@ export class Lobby {
     for (const size of partition(people.length)) {
       const group = people.slice(i, i + size); i += size;
       group.forEach((w) => room.waiting.delete(w.key));
-      const table = new Table({ io: this.io, room, humans: group, onDone: (t) => this.onDone(t) });
+      // "compare" alternates the listening AI and the answer-only AI across tables, for class tests.
+      const mode = room.aiMode === 'compare' ? (room.tablesMade % 2 === 0 ? 'listen' : 'ask') : room.aiMode;
+      room.tablesMade++;
+      const table = new Table({ io: this.io, room, humans: group, mode, onDone: (t) => this.onDone(t) });
       this.tables.set(table.id, table);
       room.tableIds.push(table.id);
       group.forEach((w) => { this.playerTable.set(w.key, table.id); this.io.to(`k:${w.key}`).emit('game:start', { sessionId: table.id }); });

@@ -1,25 +1,27 @@
-import { SCENARIO, useName, ruleBreaks } from './scenario.js';
+// Answers to questions people ask the AI directly (with @AI or the "Ask the AI" button).
+// Uses Anthropic or OpenAI when a key is set, and scripted answers otherwise or if the model fails.
 
-// The Administrator answers only from public scenario data and facts players chose to share.
-function publicContext(ctx) {
-  const plan = SCENARIO.uses.map((u) => `${u.name} ${ctx.plan[u.id]}%`).join(', ');
-  const layers = SCENARIO.layers.map((l) => `- ${l.name}: ${l.fact}`).join('\n');
-  const shared = ctx.shared.length ? ctx.shared.map((s) => `- ${s.role}: ${s.fact}`).join('\n') : '- none yet';
-  return `Place: ${SCENARIO.place}. Question for the group: ${SCENARIO.question}
-Public map layers:
-${layers}
-Rules: the plan must add up to 100%. No single use may go above ${SCENARIO.maxUse}%. Plans change in steps of ${SCENARIO.step}%. The deal locks when every human player accepts a valid plan. AI players cannot vote.
-Current stage: ${ctx.stage}, about ${ctx.secondsLeft} seconds left.
-Current shared plan: ${plan}.
-Facts players have chosen to share:
-${shared}`;
+function context(ctx) {
+  const t = ctx.task;
+  const fields = t.fields.map((f) => `- ${f.name}: ${f.options.map((x) => x.name).join(', ')}`).join('\n');
+  const info = t.info.map((i) => `- ${i.text}`).join('\n');
+  return `Task for the group: ${t.prompt}
+Plan fields and options:
+${fields}
+Game information:
+${info}
+Plan so far (from the chat):
+${ctx.summary}
+Stage: ${ctx.stage}, about ${ctx.secondsLeft} seconds left.
+Recent chat (player codes, newest last):
+${ctx.recent}`;
 }
 
-const SYSTEM = `You are "the Administrator", a clearly labeled AI player in a 10 minute campus planning role-play for university students.
-You keep time, explain the rules, and answer factual questions about the lot using ONLY the public information below.
-Never invent facts. Never guess or reveal any player's private goal or private fact unless it appears under "Facts players have chosen to share".
-Never tell the group what to choose and never take a side. You cannot vote.
-Answer in at most 2 short sentences, plain language, no emojis, no em dashes, no contractions. If the answer is not in the public information, say you do not have that information.`;
+const SYSTEM = `You are the AI in Cabrillo, a clearly labeled AI that listens to a small student group chat while they make one plan.
+You help the group decide; you never decide for them, never take a side, and you cannot vote.
+You cannot see anyone's private limits. Never guess them.
+Use only the information below. If the answer is not there, say you do not have that information.
+Answer in at most 2 short sentences, plain language, no emojis, no em dashes, no contractions.`;
 
 async function callLLM(question, ctx) {
   const controller = new AbortController();
@@ -29,11 +31,7 @@ async function callLLM(question, ctx) {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', signal: controller.signal,
         headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: process.env.AI_MODEL || 'claude-haiku-5-5', max_tokens: 160,
-          system: `${SYSTEM}\n\n${publicContext(ctx)}`,
-          messages: [{ role: 'user', content: question }]
-        })
+        body: JSON.stringify({ model: process.env.AI_MODEL || 'claude-haiku-5-5', max_tokens: 160, system: `${SYSTEM}\n\n${context(ctx)}`, messages: [{ role: 'user', content: question }] })
       });
       if (!r.ok) throw new Error(`Anthropic ${r.status}: ${(await r.text()).slice(0, 200)}`);
       const d = await r.json();
@@ -43,10 +41,7 @@ async function callLLM(question, ctx) {
       const r = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST', signal: controller.signal,
         headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: process.env.AI_MODEL || 'gpt-4o-mini', max_tokens: 160,
-          messages: [{ role: 'system', content: `${SYSTEM}\n\n${publicContext(ctx)}` }, { role: 'user', content: question }]
-        })
+        body: JSON.stringify({ model: process.env.AI_MODEL || 'gpt-4o-mini', max_tokens: 160, messages: [{ role: 'system', content: `${SYSTEM}\n\n${context(ctx)}` }, { role: 'user', content: question }] })
       });
       if (!r.ok) throw new Error(`OpenAI ${r.status}: ${(await r.text()).slice(0, 200)}`);
       const d = await r.json();
@@ -56,22 +51,15 @@ async function callLLM(question, ctx) {
   } finally { clearTimeout(timer); }
 }
 
-// Scripted answers: used when no API key is set, and as a fallback if the model fails.
 function scripted(question, ctx) {
   const s = question.toLowerCase();
-  const layer = (id) => SCENARIO.layers.find((l) => l.id === id).fact;
-  if (/park|stall|car|commut/.test(s)) return layer('parking');
-  if (/shade|tree|sun|west/.test(s)) return layer('shade');
-  if (/noise|loud|quiet|dining/.test(s)) return layer('noise');
-  if (/traffic|walk|busy|people|crowd/.test(s)) return layer('traffic');
-  if (/rule|limit|40|max/.test(s)) {
-    const b = ruleBreaks(ctx.plan);
-    return `No single use may go above ${SCENARIO.maxUse}%. ${b.length ? `Right now ${b.map((u) => u.name).join(' and ')} ${b.length > 1 ? 'are' : 'is'} over the limit.` : 'The current plan follows the rule.'}`;
-  }
-  if (/vote|accept|deal|lock|win|end/.test(s)) return 'The deal locks when every human player taps Accept on a plan that adds up to 100% and follows the 40% rule. AI players cannot vote.';
-  if (/time|long|left|minute/.test(s)) return `About ${ctx.secondsLeft} seconds are left in this stage.`;
-  if (/secret|fact|goal|private|card/.test(s)) return "I cannot see or share anyone's private card. Players decide for themselves what to share.";
-  return 'I can answer questions about foot traffic, shade, parking use, noise, the rules, and the time left. I cannot share anyone\'s private card.';
+  if (/(so far|summary|summar|decided|where are we|recap|plan)/.test(s)) return `Plan so far: ${ctx.summary}`;
+  if (/(private|limit|secret|card|what do (they|others) need)/.test(s)) return 'I cannot see anyone\'s private limits. Each person decides what to share.';
+  if (/(time|how long|left|minute)/.test(s)) return `About ${ctx.secondsLeft} seconds are left in this stage.`;
+  for (const i of ctx.task.info) if (i.kw.some((k) => s.includes(k))) return i.text;
+  if (/(vote|decide|choose for us|pick for us|what should we)/.test(s)) return 'I do not vote or choose for the group. I can list the options people have raised and what is still open.';
+  if (/(option|choices)/.test(s)) return ctx.task.fields.map((f) => `${f.name}: ${f.options.map((x) => x.name).join(', ')}`).join('. ') + '.';
+  return 'I can recap the plan so far, list what is still open, and share game information about travel, cost, and timing. I cannot see private limits.';
 }
 
 export async function answerQuestion(question, ctx) {
@@ -83,4 +71,3 @@ export async function answerQuestion(question, ctx) {
 }
 
 export const aiMode = () => (process.env.ANTHROPIC_API_KEY ? 'anthropic' : process.env.OPENAI_API_KEY ? 'openai' : 'scripted');
-export { useName };
