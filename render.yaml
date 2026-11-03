@@ -1,0 +1,22 @@
+# Render blueprint: one free web service. The database lives on Neon (free Postgres).
+services:
+  - type: web
+    name: cabrillo
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false   # paste the Neon connection string in the Render dashboard
+      - key: ADMIN_EMAILS
+        sync: false   # comma-separated emails that may export all data
+      - key: ANTHROPIC_API_KEY
+        sync: false   # optional: enables live AI answers; without it the AI uses scripted answers

@@ -1,0 +1,7 @@
+node_modules
+client/dist
+.localdb
+.testdb
+.env
+*.log
+test-shots
