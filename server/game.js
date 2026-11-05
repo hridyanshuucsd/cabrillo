@@ -10,6 +10,13 @@ const NEXT = { setup: 'chat', chat: 'confirm', confirm: 'wrap', wrap: 'done' };
 const STAGE_NAME = { setup: 'Set up', chat: 'Chat', confirm: 'Confirm', wrap: 'Wrap up' };
 const AI_NAMES = ['Ari', 'Kai', 'Noa', 'Remy'];
 const COLORS = ['#2a78d6', '#eb6834', '#8f5bd6', '#1baf7a', '#c2410c'];
+// Booking demo: the AI can prepare a ride or a table, ask everyone to approve the price, and split it.
+// Nothing is really booked or charged; prices are fixed estimates for the study.
+const BOOK_RE = /\b(book|reserve|order|call|get|grab|schedule)\b.{0,30}\b(uber|lyft|ride|rideshare|cab|taxi|car|table|restaurant|reservation|spot|dinner|lunch)\b|\b(make|need|get) a reservation\b|\breserve a table\b/i;
+const RIDE_RE = /\b(uber|lyft|ride|rideshare|cab|taxi|car)\b/i;
+const FARE = { cove: 24, balboa: 16, oldtown: 18, torrey: 28, shores: 22, clubroom: 12, apartment: 14 };
+const PLACE = { cove: 'a cafe near La Jolla Cove', balboa: 'a cafe in Balboa Park', oldtown: 'a taco restaurant in Old Town', torrey: 'a cafe near Torrey Pines', shores: 'a grill near La Jolla Shores', clubroom: 'a pizza place near campus', apartment: 'a pizza place nearby' };
+const MEAL = { low: 13, mid: 24, high: 38, free: 10, under50: 10, over50: 18 };
 const MAX_INTERJECTIONS = 2; // public, unprompted AI messages per chat stage
 const sec = (s) => s * SCALE * 1000;
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -44,6 +51,7 @@ export class Table {
     this.timers = []; this.tick = null;
     this.interjections = 0; this.lastInterjectAt = 0; this.didLimitsCheck = false; this.didConsensus = false;
     this.asked = new Set(); this.pendingQuestions = [];
+    this.bookings = [];
   }
 
   get t() { return Date.now() - this.t0; }
@@ -196,6 +204,7 @@ export class Table {
     this.pushChat({ from: p.pcode, name: p.name, kind: 'chat', text });
     this.log(p.pcode, 'chat_message', { text, stage: this.stage, length: text.length });
     this.read(p, text);
+    if (this.mode === 'listen' && this.listening() && BOOK_RE.test(text)) this.proposeBooking(p, text);
     this.broadcast();
   }
 
@@ -217,6 +226,7 @@ export class Table {
     this.pushChat({ from: p.pcode, name: p.name, kind: 'question', text });
     this.log(p.pcode, 'question_asked', { text, stage: this.stage });
     this.read(p, text);
+    if (BOOK_RE.test(text) && !this.aiPaused) { this.broadcast(); return this.proposeBooking(p, text); }
     if (this.aiPaused) { this.pendingQuestions.push({ pcode: p.pcode, name: p.name, text }); this.broadcast(); return; }
     this.broadcast();
     const recent = this.chat.filter((m) => !m.to && ['chat', 'question', 'limit'].includes(m.kind)).slice(-12).map((m) => `${this.byCode(m.from)?.pcode || m.from}: ${this.anonymize(m.text)}`).join('\n');
@@ -265,6 +275,68 @@ export class Table {
     this.sys(`Plan locked: ${this.task.fields.map((f) => optionName(this.task, f.id, this.plan[f.id])).join(', ')}.`, 'deal_summary');
     this.clearStageTimers();
     this.timers.push(setTimeout(() => this.enter('wrap'), 2500));
+    this.broadcast();
+  }
+
+  // ---------- booking demo (future agent actions) ----------
+  choice(field) {
+    const plan = this.deal ? this.deal.plan : this.plan;
+    if (plan[field]) return plan[field];
+    return this.panel().find((f) => f.id === field)?.leader || null;
+  }
+  proposeBooking(p, text) {
+    if (!['setup', 'chat', 'confirm'].includes(this.stage)) return;
+    const kind = RIDE_RE.test(text) ? 'ride' : 'table';
+    if (this.bookings.some((b) => b.kind === kind && b.status !== 'declined')) {
+      this.aiSay(`There is already a ${kind === 'ride' ? 'ride' : 'table'} request above. Approve or decline that one first.`, 'booking_duplicate', { kind }, true);
+      return;
+    }
+    const hasWhere = this.task.fields.some((f) => f.id === 'where');
+    if (!hasWhere) {
+      this.aiSay('In this demo I can book rides and restaurant tables for outings and socials, not for this task.', 'booking_unavailable', { kind }, true);
+      return;
+    }
+    const where = this.choice('where'), when = this.choice('when'), budget = this.choice('budget');
+    const n = this.players.length;
+    const placeName = where ? optionName(this.task, 'where', where) : 'the place you pick';
+    const whenName = when ? optionName(this.task, 'when', when) : 'the time you pick';
+    let title, details, total;
+    if (kind === 'ride') {
+      const cars = Math.ceil(n / 4), fare = FARE[where] || 20;
+      total = fare * cars;
+      title = `${cars > 1 ? `${cars} rides` : 'A ride'} to ${placeName}`;
+      details = [`${whenName}, pickup at UC San Diego`, `${n} people, ${cars} car${cars > 1 ? 's' : ''}`, `Estimated fare: $${total} total`];
+    } else {
+      const per = MEAL[budget] || 20;
+      total = per * n;
+      title = `Table for ${n} at ${PLACE[where] || 'a restaurant nearby'}`;
+      details = [whenName, `About $${per} per person${budget ? `, within your ${optionName(this.task, 'budget', budget)} budget` : ''}`, `Estimated total: $${total}`];
+    }
+    const perPerson = Math.round((total / n) * 100) / 100;
+    // The AI cannot see private cards, but it respects limits people chose to share.
+    const over = this.players.filter((x) => x.limitSharedAt !== null && x.limitId === 'budget15' && perPerson > 15);
+    if (over.length) details.push(`Heads up: ${list(over.map((x) => x.name))} shared a $15 limit, and this is above it.`);
+    const b = { id: `b${this.bookings.length + 1}`, kind, title, details, total, perPerson, n, votes: {}, status: 'pending', code: null, by: p.pcode };
+    this.bookings.push(b);
+    this.pushChat({ from: 'AI', name: 'AI', kind: 'booking', bookingId: b.id, text: `${p.name} asked me to book. ${title}. Split ${n} ways: $${perPerson.toFixed(2)} each. Is the price right for everyone?` });
+    this.log('AI', 'booking_proposed', { id: b.id, kind, total, per_person: perPerson, requested_by: p.pcode, where, when });
+    this.broadcast();
+  }
+  bookingVote(key, id, value) {
+    const p = this.player(key); const b = this.bookings.find((x) => x.id === id);
+    if (!p || p.isAI || !b || b.status !== 'pending' || this.stage === 'done') return;
+    b.votes[p.pcode] = !!value;
+    this.log(p.pcode, 'booking_vote', { id, value: !!value });
+    if (!value) {
+      b.status = 'declined';
+      this.aiSay(`Not booked: ${p.name} said the price does not work. I will not book anything until everyone agrees. Want a cheaper option?`, 'booking_declined', { id }, true);
+      return;
+    }
+    if (this.humans().every((h) => b.votes[h.pcode])) {
+      b.status = 'booked'; b.code = `DEMO-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+      this.aiSay(`Booked (demo, nothing was charged): ${b.title}. Confirmation ${b.code}. I sent each person a payment request for $${b.perPerson.toFixed(2)}.`, 'booking_done', { id, code: b.code }, true);
+      return;
+    }
     this.broadcast();
   }
 
@@ -393,6 +465,9 @@ export class Table {
       plan: this.plan, complete: planComplete(this.task, this.plan), deal: this.deal, outcome: this.outcome,
       chat: this.chat.filter((m) => !m.to || m.to === key).slice(-80).map(({ to, ...m }) => m),
       aiPaused: this.aiPaused, pausedBy: this.pausedBy ? this.byCode(this.pausedBy)?.name : null,
+      bookings: this.bookings.map((b) => ({ id: b.id, kind: b.kind, title: b.title, details: b.details, total: b.total, perPerson: b.perPerson, n: b.n, status: b.status, code: b.code,
+        mine: me ? (b.votes[me.pcode] ?? null) : null,
+        approved: this.humans().filter((h) => b.votes[h.pcode]).map((h) => h.name), waiting: this.humans().filter((h) => b.votes[h.pcode] === undefined).map((h) => h.name) })),
       surveyUrl: this.room.surveyUrl || null, roomCode: this.room.code, kind: this.room.kind
     };
   }

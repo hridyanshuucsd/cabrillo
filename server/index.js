@@ -130,6 +130,7 @@ io.on('connection', (socket) => {
   socket.on('game:set', ({ sessionId, field, option }) => table(sessionId)?.setField(id.key, String(field), String(option)));
   socket.on('game:chat', ({ sessionId, text }) => table(sessionId)?.say(id.key, text));
   socket.on('game:ask', ({ sessionId, text }) => table(sessionId)?.ask(id.key, text));
+  socket.on('game:booking', ({ sessionId, bookingId, value }) => table(sessionId)?.bookingVote(id.key, String(bookingId), value));
   socket.on('game:accept', ({ sessionId, value }) => table(sessionId)?.accept(id.key, value));
 
   // Host console: watch tables, advance stages, pause the AI and speak for it (Wizard of Oz).

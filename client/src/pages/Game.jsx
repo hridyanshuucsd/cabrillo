@@ -188,7 +188,7 @@ function Chat({ g, send }) {
     <div className="card stack">
       <div className="row between"><span className="label">Group chat</span></div>
       <div className="chat" ref={box} aria-live="polite">
-        {g.chat.map((m) => (
+        {g.chat.map((m) => m.kind === 'booking' ? <BookingCard key={m.id} b={(g.bookings || []).find((x) => x.id === m.bookingId)} send={send} /> : (
           <div key={m.id} className={`msg ${m.kind === "chat" ? "human" : m.kind}`}>
             {(m.kind === 'ai' || m.kind === 'private') && <span className="chip ai" style={{ marginRight: 6, padding: '1px 7px' }}>AI</span>}
             {m.kind === 'private' && <span className="chip" style={{ marginRight: 6, padding: '1px 7px' }}>Only you see this</span>}
@@ -205,6 +205,32 @@ function Chat({ g, send }) {
           <button className="btn ghost small" type="button" onClick={() => go('game:ask')} disabled={!text.trim()}>Ask the AI instead</button>
         </>
       )}
+    </div>
+  );
+}
+
+const BOOK_STATUS = { pending: ['Waiting for everyone', ''], booked: ['Booked (demo)', 'ok'], declined: ['Not booked', 'warn'] };
+function BookingCard({ b, send }) {
+  if (!b) return null;
+  const [label, tone] = BOOK_STATUS[b.status];
+  return (
+    <div className="msg booking" role="group" aria-label={`Booking: ${b.title}`}>
+      <div className="row between" style={{ gap: 6 }}>
+        <span><span className="chip ai" style={{ marginRight: 6, padding: '1px 7px' }}>AI</span><strong>{b.kind === 'ride' ? 'Ride request' : 'Table request'}</strong></span>
+        <span className={`chip ${tone}`}>{label}</span>
+      </div>
+      <div style={{ fontWeight: 700, margin: '6px 0 2px' }}>{b.title}</div>
+      {b.details.map((d) => <div key={d} className="small muted">{d}</div>)}
+      <div className="split">Split {b.n} ways: <strong>${b.perPerson.toFixed(2)} each</strong></div>
+      {b.status === 'pending' && (b.mine === null
+        ? <div className="row" style={{ gap: 8 }}>
+            <button className="btn small" onClick={() => send('game:booking', { bookingId: b.id, value: true })}>Price looks right</button>
+            <button className="btn ghost small" onClick={() => send('game:booking', { bookingId: b.id, value: false })}>Not for me</button>
+          </div>
+        : <div className="small muted">You approved. Waiting for: {b.waiting.join(', ') || 'no one'}.</div>)}
+      {b.status === 'booked' && <div className="small">Confirmation {b.code}. Payment requests sent. Nothing was really booked or charged in this demo.</div>}
+      {b.status === 'declined' && <div className="small muted">Someone said the price does not work, so nothing was booked.</div>}
+      <div className="small muted" style={{ marginTop: 4 }}>Approved: {b.approved.length ? b.approved.join(', ') : 'nobody yet'}</div>
     </div>
   );
 }

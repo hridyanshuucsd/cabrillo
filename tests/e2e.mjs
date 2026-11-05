@@ -81,6 +81,12 @@ try {
   await say(d, '@AI how do we get to Old Town?');
   await d.getByText(/easy by trolley or bus/).first().waitFor({ timeout: 8000 });
   check('@AI question gets an answer at the answer-only table', true);
+  await say(d, '@AI can you book an uber for us?');
+  await d.getByText('Ride request').first().waitFor({ timeout: 5000 });
+  check('answer-only AI books only when asked with @AI', true);
+  await ask[1].getByRole('button', { name: 'Not for me' }).click();
+  await d.getByText(/Not booked/).first().waitFor({ timeout: 5000 });
+  check('one person can stop a booking', true);
 
   // ---------- listening table ----------
   const [a, b, c] = listen;
@@ -106,6 +112,18 @@ try {
   await a.getByText(/Plan so far: Where: Old Town/).first().waitFor({ timeout: 8000 });
   check('@AI can recap the plan', true);
   await shot(c, '03_chat_quiet_member');
+
+  // ---------- booking demo: the AI prepares a table, everyone approves the price, then it books ----------
+  await say(a, 'Can someone reserve a table for lunch after?');
+  await b.getByText('Table request').first().waitFor({ timeout: 5000 });
+  check('a booking request becomes a card everyone sees', (await c.getByText('Table request').count()) > 0);
+  await a.getByRole('button', { name: 'Price looks right' }).click();
+  await b.getByRole('button', { name: 'Price looks right' }).click();
+  await shot(c, '09_booking_pending');
+  await c.getByRole('button', { name: 'Price looks right' }).click();
+  await a.getByText(/Confirmation DEMO-/).first().waitFor({ timeout: 5000 });
+  check('the booking completes only after everyone approves the price', true);
+  await shot(a, '10_booking_done');
   for (const p of listen) await p.getByRole('button', { name: 'Ready to confirm' }).click();
   await a.getByRole('heading', { name: 'Final plan' }).waitFor({ timeout: 5000 });
   check('Ready to confirm moves the table on early', true);
@@ -145,7 +163,7 @@ try {
   // ---------- data export ----------
   const csv = await (await host.request.get(`${BASE}/api/export/${code}/logs.csv`)).text();
   const types = new Set(csv.split('\n').slice(1).map((l) => l.split(',')[4]));
-  const need = ['session_started', 'stage_started', 'ready_clicked', 'chat_message', 'panel_update', 'ai_nudge_private', 'ai_paused_by_player', 'question_asked', 'ai_answer', 'limit_shared', 'ready_to_confirm', 'plan_edit', 'vote', 'deal_locked', 'session_outcome', 'feedback_submitted'];
+  const need = ['booking_proposed', 'booking_vote', 'booking_done', 'booking_declined', 'session_started', 'stage_started', 'ready_clicked', 'chat_message', 'panel_update', 'ai_nudge_private', 'ai_paused_by_player', 'question_asked', 'ai_answer', 'limit_shared', 'ready_to_confirm', 'plan_edit', 'vote', 'deal_locked', 'session_outcome', 'feedback_submitted'];
   const missing = need.filter((t) => !types.has(t));
   check('log export contains every event type', missing.length === 0, missing.length ? `missing: ${missing}` : `${csv.split('\n').length - 1} rows`);
   check('log export has an interjection', types.has('limits_check') || types.has('conflict'));
