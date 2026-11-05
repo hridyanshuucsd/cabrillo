@@ -57,7 +57,7 @@ function TableCard({ t, code }) {
   return (
     <div className="card stack">
       <div className="row between"><strong>Table {t.id.slice(0, 4)}</strong><span className="chip ok">{t.stage}{t.stage !== 'done' ? ` · ${mmss(left)}` : ''}</span></div>
-      <div className="row wrap-row"><span className="chip">{t.task}</span><span className="chip ai">{t.mode === 'listen' ? 'Listening AI' : 'Answer-only AI'}</span>{t.mode === 'listen' && <span className="chip">{t.interjections} of 3 interjections</span>}{t.pausedBy && <span className="chip warn">Paused by {t.pausedBy}</span>}</div>
+      <div className="row wrap-row"><span className="chip">{t.task}</span><span className="chip ai">{t.mode === 'listen' ? 'Listening AI' : 'Answer-only AI'}</span>{t.mode === 'listen' && <span className="chip">{t.interjections} of 2 interjections</span>}{t.pausedBy && <span className="chip warn">Paused by {t.pausedBy}</span>}</div>
       <div className="small"><strong>Plan so far:</strong> {t.summary}</div>
       {t.deal && <div className="chip ok">Plan locked</div>}
       {t.outcome && <div className="small">Limits that came up: {t.outcome.surfaced} of {t.outcome.of}{t.outcome.complete ? ` · plan works for ${t.outcome.respected} of ${t.outcome.of}` : ''}</div>}

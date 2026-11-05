@@ -18,7 +18,7 @@ Team 19, COGS 123 (Social Computing), UC San Diego. Place names are real; every 
 | Stage | Length | What happens |
 |---|---|---|
 | Set up | 1 min | Read the task and your private limit. Ends early when every person taps "I am ready". |
-| Chat | 6 min | Chat freely. The listening AI updates the Plan so far, asks at most 3 questions (limits check, a conflict, an open question, or a consensus check), and invites quiet people privately. Anyone can pause it. Type @AI to ask it something. Ends early when everyone taps "Ready to confirm". |
+| Chat | 6 min | Chat freely. The listening AI updates the Plan so far, asks at most 2 questions (limits check, a conflict, an open question, or a consensus check; the cap was lowered from 3 after the Phase 2 survey), and invites quiet people privately. Anyone can pause it. Type @AI to ask it something. Ends early when everyone taps "Ready to confirm". |
 | Confirm | 2 min | The AI drafts the plan from the chat. Anyone can change a choice; any change clears all accepts. The plan locks when everyone accepts a complete plan. |
 | Wrap up | 1 min | Every limit is shown, with when it came up and whether the plan respects it. Three quick feedback questions. |
 

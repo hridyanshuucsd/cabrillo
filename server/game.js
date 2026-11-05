@@ -10,7 +10,7 @@ const NEXT = { setup: 'chat', chat: 'confirm', confirm: 'wrap', wrap: 'done' };
 const STAGE_NAME = { setup: 'Set up', chat: 'Chat', confirm: 'Confirm', wrap: 'Wrap up' };
 const AI_NAMES = ['Ari', 'Kai', 'Noa', 'Remy'];
 const COLORS = ['#2a78d6', '#eb6834', '#8f5bd6', '#1baf7a', '#c2410c'];
-const MAX_INTERJECTIONS = 3; // public, unprompted AI messages per chat stage
+const MAX_INTERJECTIONS = 2; // public, unprompted AI messages per chat stage
 const sec = (s) => s * SCALE * 1000;
 const rand = (a, b) => a + Math.random() * (b - a);
 const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };

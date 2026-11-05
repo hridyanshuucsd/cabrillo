@@ -93,7 +93,9 @@ function Setup({ g, send }) {
         ))}
         <AIRow g={g} />
       </div>
-      <p className="small muted" style={{ margin: 0 }}>By tapping "I am ready" you agree that the AI may read this table's chat. Anyone can pause it during the chat.</p>
+      <p className="small muted" style={{ margin: 0 }}>{g.mode === 'listen'
+        ? 'The chat starts only when everyone taps "I am ready". By tapping it you agree that the AI may read this table\'s chat to keep the Plan so far. It speaks up at most twice, and anyone can pause it.'
+        : 'The chat starts only when everyone taps "I am ready". At this table the AI reads a message only when someone starts it with @AI.'}</p>
       <button className="btn block" disabled={g.me.ready} onClick={() => send('game:ready')}>{g.me.ready ? 'Waiting for the others...' : 'I am ready'}</button>
     </>
   );
