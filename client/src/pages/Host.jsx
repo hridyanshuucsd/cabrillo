@@ -15,7 +15,8 @@ export default function Host() {
     watch(); const s = getSocket(); s.on('connect', watch); return () => s.off('connect', watch);
   }, [code]);
   const link = `${window.location.origin}/join/${code}`;
-  const list = Object.values(tables);
+  const list = Object.values(tables).sort((a, b) => a.number - b.number);
+  const live = list.filter((t) => t.stage !== 'done').length;
   const exp = (f) => `/api/export/${code}/${f}`;
 
   return (
@@ -25,7 +26,7 @@ export default function Host() {
       <div className="row wrap-row" style={{ gap: 14, alignItems: 'stretch' }}>
         <div className="card stack" style={{ flex: '1 1 320px' }}>
           <div className="label">Class session · join code</div>
-          {room && <div className="small muted">Task: {room.task} · AI: {room.aiMode === 'compare' ? 'tables alternate listening and answer-only' : room.aiMode === 'ask' ? 'answer-only' : 'listening'}</div>}
+          {room && <div className="small muted">Scenario: {room.task === 'mixed' ? 'a different one for each table' : room.task} · About {room.groupSize} per table · AI: {room.aiMode === 'compare' ? 'tables alternate listening and answer-only' : room.aiMode === 'ask' ? 'answer-only' : 'listening'}</div>}
           <div className="big-code">{code}</div>
           <div className="small">Students open <strong>{link}</strong></div>
           <button className="btn small ghost" onClick={() => navigator.clipboard?.writeText(link)}>Copy link</button>
@@ -36,7 +37,7 @@ export default function Host() {
           <button className="btn" disabled={!room?.waiting.length} onClick={async () => { const r = await emit('room:start', { code }); if (r.error) setError(r.error); }}>
             Start tables ({room?.waiting.length || 0} waiting)
           </button>
-          <p className="small muted" style={{ margin: 0 }}>Groups of 3 to 5. Late arrivals wait here; press Start again to seat them.</p>
+          <p className="small muted" style={{ margin: 0 }}>Tables of about {room?.groupSize || 4} (never fewer than 3 or more than 5). Late arrivals wait here; press Start again. One or two late arrivals join a table that is still in Set up{room?.openSeats ? ` (${room.openSeats} can take them now)` : ''}; otherwise they get a new table with AI players in the empty seats.</p>
         </div>
         <div className="card stack" style={{ flex: '1 1 220px' }}>
           <div className="label">Download data (CSV)</div>
@@ -44,7 +45,7 @@ export default function Host() {
           <p className="small muted" style={{ margin: 0 }}>Codes only, no names or emails.</p>
         </div>
       </div>
-      <h2>Tables ({list.length})</h2>
+      <h2>Tables ({list.length}{list.length ? `, ${live} still running` : ''})</h2>
       <div className="grid-tables">{list.map((t) => <TableCard key={t.id} t={t} code={code} />)}</div>
     </div>
   );
@@ -56,8 +57,8 @@ function TableCard({ t, code }) {
   const send = (ev, extra) => getSocket().emit(ev, { code, sessionId: t.id, ...extra });
   return (
     <div className="card stack">
-      <div className="row between"><strong>Table {t.id.slice(0, 4)}</strong><span className="chip ok">{t.stage}{t.stage !== 'done' ? ` · ${mmss(left)}` : ''}</span></div>
-      <div className="row wrap-row"><span className="chip">{t.task}</span><span className="chip ai">{t.mode === 'listen' ? 'Listening AI' : 'Answer-only AI'}</span>{t.mode === 'listen' && <span className="chip">{t.interjections} of 2 interjections</span>}{t.pausedBy && <span className="chip warn">Paused by {t.pausedBy}</span>}</div>
+      <div className="row between"><strong>Table {t.number} · {t.task}</strong><span className="chip ok">{t.stage}{t.stage !== 'done' ? ` · ${mmss(left)}` : ''}</span></div>
+      <div className="row wrap-row"><span className="chip ai">{t.mode === 'listen' ? 'Listening AI' : 'Answer-only AI'}</span>{t.mode === 'listen' && <span className="chip">{t.interjections} of 2 interjections</span>}{t.pausedBy && <span className="chip warn">Paused by {t.pausedBy}</span>}</div>
       <div className="small"><strong>Plan so far:</strong> {t.summary}</div>
       {t.deal && <div className="chip ok">Plan locked</div>}
       {t.outcome && <div className="small">Limits that came up: {t.outcome.surfaced} of {t.outcome.of}{t.outcome.complete ? ` · plan works for ${t.outcome.respected} of ${t.outcome.of}` : ''}</div>}

@@ -18,6 +18,8 @@ export default function Home() {
   const [tasks, setTasks] = useState([]);
   const [task, setTask] = useState('outing');
   const [mode, setMode] = useState('compare');
+  const [classTask, setClassTask] = useState('mixed');
+  const [groupSize, setGroupSize] = useState(4);
   const [showHost, setShowHost] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => { fetch('/api/tasks').then((r) => r.json()).then(setTasks).catch(() => {}); }, []);
@@ -25,7 +27,7 @@ export default function Home() {
   async function create(kind) {
     setError('');
     try {
-      const r = await api('/api/rooms', { kind, task, aiMode: kind === 'class' ? mode : 'listen', surveyUrl: kind === 'class' ? survey : '' });
+      const r = await api('/api/rooms', { kind, task: kind === 'class' ? classTask : task, groupSize, aiMode: kind === 'class' ? mode : 'listen', surveyUrl: kind === 'class' ? survey : '' });
       nav(kind === 'class' ? `/host/${r.code}` : `/room/${r.code}`);
     } catch (e) { setError(e.message); }
   }
@@ -70,10 +72,22 @@ export default function Home() {
 
       <div className="card stack">
         <div className="row between"><h2 style={{ margin: 0 }}>Host a class session</h2>{me.isGuest && <span className="chip">Account needed</span>}</div>
-        <p className="small muted">Everyone joins one code. When you press Start, the app splits them into tables of 3 to 5. You can watch every table and speak for the AI.</p>
+        <p className="small muted">Everyone joins one code. When you press Start, the app splits them into tables of 3 to 5, each with its own scenario. You can watch every table and speak for the AI.</p>
         {showHost ? (
           <div className="stack">
-            {taskPicker('Task for every table')}
+            <label className="field">Scenario
+              <select value={classTask} onChange={(e) => setClassTask(e.target.value)}>
+                <option value="mixed">A different scenario for each table (recommended)</option>
+                {tasks.map((t) => <option key={t.id} value={t.id}>Every table: {t.title}</option>)}
+              </select>
+            </label>
+            <label className="field">People per table
+              <select value={groupSize} onChange={(e) => setGroupSize(Number(e.target.value))}>
+                <option value={4}>About 4 (recommended)</option>
+                <option value={5}>About 5</option>
+                <option value={3}>About 3</option>
+              </select>
+            </label>
             <div className="stack" style={{ gap: 6 }} role="radiogroup" aria-label="AI at the tables">
               <span className="small" style={{ fontWeight: 600 }}>AI at the tables</span>
               {MODES.map(([v, label, help]) => (

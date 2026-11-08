@@ -49,6 +49,9 @@ To test with several players, open the app in a normal window, a private window,
 
 ## Running a class test
 
+**Recommended setup for a full class (up to about 80 people):** choose "A different scenario for each table" and "About 4" people per table. The app has 20 scenarios (weekend outing, group project, club social, group dinner, study session, weekend trip, roommate rules, surprise birthday, Friendsgiving, team meeting, intramural team, game night, beach house costs, family dinner, beach cleanup, moving day, hackathon team, concert night, next year's apartment, volunteer day), so up to 20 tables each get their own. If there are more tables than scenarios, a scenario repeats with the other AI mode. Tables are never smaller than 3 or larger than 5.
+
+
 1. Sign in, choose "Set up a class session", optionally paste your Google Form feedback link, and create it.
 2. Put the join link or code on your intro slide. Classmates open it on their phones and continue as guests.
 3. When everyone is waiting, press **Start tables**. Late arrivals can be seated by pressing Start again.
@@ -59,7 +62,9 @@ To test with several players, open the app in a normal window, a private window,
 
 ```bash
 npm run build
-npm run test:e2e   # one host and four players play a full session in separate browsers; screenshots in test-shots/
+npm run test:e2e   # one host and six players play a class session in separate browsers; screenshots in test-shots/
+node tests/load.mjs 75   # 75 simulated students play one class session at once (about 1 minute)
+node tests/scenarios.mjs # every scenario has a plan that respects all five limits
 ```
 
 The test uses Playwright (`npm i -D playwright && npx playwright install chromium` if it is not installed).
@@ -70,7 +75,8 @@ The test uses Playwright (`npm i -D playwright && npx playwright install chromiu
 server/index.js     web server, API routes, realtime events, CSV export
 server/game.js      one table: stages, timers, the listening AI's interjections and nudges, AI players, logging
 server/listener.js  reads the chat: which options each person supports or rejects, and the Plan so far
-server/tasks.js     the tasks: plan fields, options, private limits, game information
+server/tasks.js     the first three tasks: plan fields, options, private limits, game information
+server/scenarios.js 17 more scenarios, so every class table can get its own
 server/lobby.js     rooms, class sessions, Play now matching, table splitting, AI mode per table
 server/ai.js        answers to @AI questions (Anthropic or OpenAI if a key is set, scripted otherwise)
 server/auth.js      accounts, guests, sign-in cookies

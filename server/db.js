@@ -6,7 +6,7 @@ if (!url) {
   process.exit(1);
 }
 const local = /localhost|127\.0\.0\.1/.test(url);
-const pool = new pg.Pool({ connectionString: url, ssl: local ? false : { rejectUnauthorized: false }, max: 5 });
+const pool = new pg.Pool({ connectionString: url, ssl: local ? false : { rejectUnauthorized: false }, max: 10 });
 
 export const q = (text, params) => pool.query(text, params);
 
@@ -70,6 +70,7 @@ export async function migrate() {
     alter table rooms add column if not exists task text;
     alter table rooms add column if not exists ai_mode text;
     alter table feedback add column if not exists ai_amount text;
+    alter table rooms add column if not exists group_size int;
   `);
 }
 

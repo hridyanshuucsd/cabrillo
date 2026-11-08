@@ -39,7 +39,7 @@ try {
   await host.locator('input[type=checkbox]').check();
   await host.getByRole('button', { name: 'Create account' }).click();
   await host.getByRole('button', { name: 'Set up a class session' }).click();
-  await host.getByLabel('Task for every table').selectOption('outing');
+  await host.getByLabel('Scenario').selectOption('outing');
   await host.getByRole('button', { name: 'Create class session' }).click();
   await host.waitForURL(/\/host\//);
   const code = host.url().split('/host/')[1];

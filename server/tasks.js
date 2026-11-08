@@ -2,6 +2,8 @@
 // Limits are dealt one per seat. At least one plan respects every limit, so the group can always succeed.
 // Places are real San Diego names, but all limits, prices, and times are invented for the game.
 
+import { SCENARIOS } from './scenarios.js';
+
 const o = (id, name, kw) => ({ id, name, kw });
 
 export const TASKS = {
@@ -92,6 +94,12 @@ export const TASKS = {
   }
 };
 
+Object.assign(TASKS, SCENARIOS);
+TASKS.outing.limits.find((l) => l.id === 'budget15').maxPerPerson = 15;
+
+// 'mixed' is not a task: in a class session it gives every table a different scenario.
+export const MIXED = 'mixed';
+export const ORDER = Object.keys(TASKS);
 export const DEFAULT_TASK = 'outing';
 export const taskById = (id) => TASKS[id] || TASKS[DEFAULT_TASK];
 export const fieldName = (task, fid) => task.fields.find((f) => f.id === fid)?.name || fid;

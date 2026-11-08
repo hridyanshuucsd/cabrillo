@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { q } from './db.js';
 import { Table } from './game.js';
-import { DEFAULT_TASK } from './tasks.js';
+import { DEFAULT_TASK, MIXED, ORDER } from './tasks.js';
 
 const SCALE = Number(process.env.TIME_SCALE || 1);
 const FILL_AFTER = Number(process.env.FILL_AFTER_SECONDS || 60) * 1000; // Play now: AI fills empty seats after this wait
@@ -9,13 +9,17 @@ const GATHER = Number(process.env.GATHER_SECONDS || 10) * 1000;       // Play no
 const KEEP_TABLE = 30 * 60 * 1000;
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-// Split n waiting players into tables of 3 to 5 people.
-export function partition(n) {
+// Split n waiting players into tables as close to the target size as possible, never fewer than 3 or more than 5.
+export function partition(n, target = 5) {
   if (n <= 0) return [];
   if (n <= 5) return [n];
-  const k = Math.ceil(n / 5), base = Math.floor(n / k), extra = n % k;
+  target = Math.min(5, Math.max(3, Number(target) || 5));
+  let k = Math.ceil(n / target);
+  while (k > 1 && Math.floor(n / k) < 3) k--;
+  const base = Math.floor(n / k), extra = n % k;
   return Array.from({ length: k }, (_, i) => base + (i < extra ? 1 : 0));
 }
+const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
 export class Lobby {
   constructor(io) {
@@ -27,26 +31,28 @@ export class Lobby {
     setInterval(() => this.checkQuick(), 1000);
   }
 
-  blankRoom(code, kind, ownerKey, surveyUrl, task, aiMode) {
-    return { code, kind, ownerKey, surveyUrl, task: task || DEFAULT_TASK, aiMode: aiMode || 'listen', tablesMade: 0, waiting: new Map(), tableIds: [], gatherTimer: null };
+  blankRoom(code, kind, ownerKey, surveyUrl, task, aiMode, groupSize) {
+    // order: the scenario sequence for 'mixed' rooms, shuffled once so every table gets a different one.
+    return { code, kind, ownerKey, surveyUrl, task: task || DEFAULT_TASK, aiMode: aiMode || 'listen', groupSize: groupSize || 4, order: shuffle(ORDER),
+      tablesMade: 0, waiting: new Map(), tableIds: [], gatherTimer: null };
   }
 
-  async createRoom(kind, owner, surveyUrl, task, aiMode) {
+  async createRoom(kind, owner, surveyUrl, task, aiMode, groupSize) {
     let code;
     do { code = Array.from(crypto.randomBytes(5), (b) => ALPHABET[b % ALPHABET.length]).join(''); } while (this.rooms.has(code));
-    const room = this.blankRoom(code, kind, owner.key, surveyUrl || null, task, aiMode);
+    const room = this.blankRoom(code, kind, owner.key, surveyUrl || null, task, aiMode, groupSize);
     this.rooms.set(code, room);
-    await q('insert into rooms (code, owner_key, kind, survey_url, task, ai_mode) values ($1,$2,$3,$4,$5,$6)', [code, owner.key, kind, surveyUrl || null, room.task, room.aiMode]);
+    await q('insert into rooms (code, owner_key, kind, survey_url, task, ai_mode, group_size) values ($1,$2,$3,$4,$5,$6,$7)', [code, owner.key, kind, surveyUrl || null, room.task, room.aiMode, room.groupSize]);
     return room;
   }
 
   async getRoom(code) {
     code = String(code || '').toUpperCase().trim();
     if (this.rooms.has(code)) return this.rooms.get(code);
-    const r = await q('select code, owner_key, kind, survey_url, task, ai_mode from rooms where code=$1', [code]);
+    const r = await q('select code, owner_key, kind, survey_url, task, ai_mode, group_size from rooms where code=$1', [code]);
     if (!r.rows[0]) return null;
     const row = r.rows[0];
-    const room = this.blankRoom(row.code, row.kind, row.owner_key, row.survey_url, row.task, row.ai_mode);
+    const room = this.blankRoom(row.code, row.kind, row.owner_key, row.survey_url, row.task, row.ai_mode, row.group_size);
     this.rooms.set(room.code, room);
     return room;
   }
@@ -89,9 +95,10 @@ export class Lobby {
 
   roomState(room) {
     return {
-      code: room.code, kind: room.kind, ownerKey: room.ownerKey, surveyUrl: room.surveyUrl, task: room.task, aiMode: room.aiMode,
+      code: room.code, kind: room.kind, ownerKey: room.ownerKey, surveyUrl: room.surveyUrl, task: room.task, aiMode: room.aiMode, groupSize: room.groupSize,
       waiting: [...room.waiting.values()].map((w) => ({ name: w.name })),
-      tables: room.tableIds.map((id) => this.tables.get(id)).filter(Boolean).map((t) => ({ id: t.id, stage: t.stage, size: t.players.length, mode: t.mode }))
+      openSeats: room.tableIds.map((id) => this.tables.get(id)).filter((t) => t && t.canSeat()).length,
+      tables: room.tableIds.map((id) => this.tables.get(id)).filter(Boolean).map((t) => ({ id: t.id, number: t.number, task: t.task.short, stage: t.stage, size: t.players.length, mode: t.mode }))
     };
   }
   emitRoom(room) { this.io.to(`room:${room.code}`).emit('room:state', this.roomState(room)); }
@@ -100,8 +107,23 @@ export class Lobby {
     const room = await this.getRoom(code);
     if (!room) return { error: 'No room with that code.' };
     if (room.ownerKey !== byKey) return { error: 'Only the person who created this room can start it.' };
-    const waiting = [...room.waiting.values()];
+    let waiting = [...room.waiting.values()];
     if (!waiting.length) return { error: 'Nobody is waiting yet.' };
+    // One or two late arrivals: seat them at tables still in Set up (taking an AI seat or an empty one) before making a new table.
+    if (waiting.length < 3) {
+      for (const w of waiting) {
+        const t = room.tableIds.map((id) => this.tables.get(id)).filter((x) => x && x.canSeat()).sort((a, b) => a.humans().length - b.humans().length)[0];
+        if (!t || !room.waiting.has(w.key)) continue;
+        room.waiting.delete(w.key); // removed first, so a second press of Start cannot seat the same person twice
+        if (await t.addHuman(w)) {
+          this.playerTable.set(w.key, t.id);
+          this.io.to(`k:${w.key}`).emit('game:start', { sessionId: t.id });
+        } else room.waiting.set(w.key, w);
+      }
+      waiting = [...room.waiting.values()];
+      this.emitRoom(room);
+      if (!waiting.length) return { ok: true, seated: true };
+    }
     this.formTables(room, waiting);
     return { ok: true };
   }
@@ -109,13 +131,18 @@ export class Lobby {
   formTables(room, waiting) {
     const people = [...waiting].sort(() => Math.random() - 0.5);
     let i = 0;
-    for (const size of partition(people.length)) {
+    for (const size of partition(people.length, room.kind === 'class' ? room.groupSize : 5)) {
       const group = people.slice(i, i + size); i += size;
       group.forEach((w) => room.waiting.delete(w.key));
+      const n = room.tablesMade, S = room.order.length;
+      // 'mixed' gives each table the next scenario in the room's shuffled order, so no two tables share one until all are used.
+      const taskId = room.task === MIXED ? room.order[n % S] : room.task;
       // "compare" alternates the listening AI and the answer-only AI across tables, for class tests.
-      const mode = room.aiMode === 'compare' ? (room.tablesMade % 2 === 0 ? 'listen' : 'ask') : room.aiMode;
+      // When scenarios repeat (more tables than scenarios), the repeat gets the other AI mode.
+      const flip = room.task === MIXED ? Math.floor(n / S) : 0;
+      const mode = room.aiMode === 'compare' ? ((n + flip) % 2 === 0 ? 'listen' : 'ask') : room.aiMode;
       room.tablesMade++;
-      const table = new Table({ io: this.io, room, humans: group, mode, onDone: (t) => this.onDone(t) });
+      const table = new Table({ io: this.io, room, humans: group, mode, taskId, number: n + 1, onDone: (t) => this.onDone(t) });
       this.tables.set(table.id, table);
       room.tableIds.push(table.id);
       group.forEach((w) => { this.playerTable.set(w.key, table.id); this.io.to(`k:${w.key}`).emit('game:start', { sessionId: table.id }); });

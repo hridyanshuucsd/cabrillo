@@ -26,10 +26,11 @@ const list = (names) => names.length <= 1 ? names.join('') : `${names.slice(0, -
 export const firstPerson = (s) => s.replace(/told you/g, 'told me').replace(/\b[Yy]ou are\b/g, 'I am').replace(/\bYou\b/g, 'I').replace(/\byou\b/g, 'I').replace(/\bYour\b/g, 'My').replace(/\byour\b/g, 'my');
 
 export class Table {
-  constructor({ io, room, humans, onDone, mode }) {
+  constructor({ io, room, humans, onDone, mode, taskId, number }) {
     this.id = crypto.randomBytes(5).toString('hex');
     this.io = io; this.room = room; this.onDone = onDone;
-    this.task = taskById(room.task);
+    this.task = taskById(taskId || room.task);
+    this.number = number || 1;
     this.mode = mode === 'ask' ? 'ask' : 'listen';
     this.t0 = Date.now();
     const seats = Math.min(5, Math.max(3, humans.length));
@@ -52,6 +53,29 @@ export class Table {
     this.interjections = 0; this.lastInterjectAt = 0; this.didLimitsCheck = false; this.didConsensus = false;
     this.asked = new Set(); this.pendingQuestions = [];
     this.bookings = [];
+    this.lastBroadcast = 0;
+  }
+
+  // A late arrival takes an AI player's seat, or an empty seat, while the table is still in Set up.
+  canSeat() { return this.stage === 'setup' && (this.players.some((p) => p.isAI) || this.players.length < 5); }
+  async addHuman(h) {
+    if (!this.canSeat() || this.player(h.key)) return false;
+    const n = this.humans().length + 1;
+    const pcode = `P0${n}`;
+    const ai = this.players.find((p) => p.isAI);
+    let limitId;
+    if (ai) { limitId = ai.limitId; this.players = this.players.filter((p) => p !== ai); }
+    else { const used = new Set(this.players.map((p) => p.limitId)); limitId = this.task.limits.find((l) => !used.has(l.id)).id; }
+    const p = { key: h.key, name: h.name, userId: h.userId, isGuest: h.isGuest, isAI: false, pcode, color: COLORS[(n - 1) % COLORS.length],
+      limitId, limitSharedAt: null, limitMentionedAt: null, ready: false, confirmReady: false, msgs: 0, nudged: false };
+    this.players.splice(this.humans().length, 0, p);
+    try {
+      if (ai) await q('delete from session_players where session_id=$1 and pcode=$2', [this.id, ai.pcode]);
+      await q('insert into session_players (session_id, pcode, user_id, display_name, role_id, is_ai, is_guest) values ($1,$2,$3,$4,$5,$6,$7)', [this.id, pcode, h.userId || null, h.name, limitId, false, !!h.isGuest]);
+    } catch (e) { console.error('late seat insert failed', e.message); }
+    this.log('system', 'player_joined_late', { pcode, replaced_ai: ai ? ai.pcode : null, limit: limitId });
+    this.sys(`${h.name} joined the table.`, 'join_notice');
+    return true;
   }
 
   get t() { return Date.now() - this.t0; }
@@ -86,7 +110,7 @@ export class Table {
           [this.id, p.pcode, p.userId || null, p.name, p.limitId, p.isAI, !!p.isGuest]);
       }
     } catch (e) { console.error('session insert failed', e.message); }
-    this.log('system', 'session_started', { room: this.room.code, kind: this.room.kind, task: this.task.id, ai_mode: this.mode, seats: this.players.map((p) => ({ pcode: p.pcode, limit: p.limitId, ai: p.isAI })) });
+    this.log('system', 'session_started', { room: this.room.code, kind: this.room.kind, table: this.number, task: this.task.id, ai_mode: this.mode, seats: this.players.map((p) => ({ pcode: p.pcode, limit: p.limitId, ai: p.isAI })) });
     this.tick = setInterval(() => this.onTick(), 1000);
     this.enter('setup');
   }
@@ -279,6 +303,7 @@ export class Table {
   }
 
   // ---------- booking demo (future agent actions) ----------
+  opt(field, id) { return this.task.fields.find((f) => f.id === field)?.options.find((x) => x.id === id); }
   choice(field) {
     const plan = this.deal ? this.deal.plan : this.plan;
     if (plan[field]) return plan[field];
@@ -302,20 +327,20 @@ export class Table {
     const whenName = when ? optionName(this.task, 'when', when) : 'the time you pick';
     let title, details, total;
     if (kind === 'ride') {
-      const cars = Math.ceil(n / 4), fare = FARE[where] || 20;
+      const cars = Math.ceil(n / 4), fare = this.opt('where', where)?.fare || FARE[where] || 20;
       total = fare * cars;
       title = `${cars > 1 ? `${cars} rides` : 'A ride'} to ${placeName}`;
       details = [`${whenName}, pickup at UC San Diego`, `${n} people, ${cars} car${cars > 1 ? 's' : ''}`, `Estimated fare: $${total} total`];
     } else {
-      const per = MEAL[budget] || 20;
+      const per = this.opt('budget', budget)?.per || MEAL[budget] || 20;
       total = per * n;
-      title = `Table for ${n} at ${PLACE[where] || 'a restaurant nearby'}`;
+      title = `Table for ${n} at ${this.opt('where', where)?.place || PLACE[where] || 'a restaurant nearby'}`;
       details = [whenName, `About $${per} per person${budget ? `, within your ${optionName(this.task, 'budget', budget)} budget` : ''}`, `Estimated total: $${total}`];
     }
     const perPerson = Math.round((total / n) * 100) / 100;
     // The AI cannot see private cards, but it respects limits people chose to share.
-    const over = this.players.filter((x) => x.limitSharedAt !== null && x.limitId === 'budget15' && perPerson > 15);
-    if (over.length) details.push(`Heads up: ${list(over.map((x) => x.name))} shared a $15 limit, and this is above it.`);
+    const over = this.players.filter((x) => x.limitSharedAt !== null && this.limitOf(x).maxPerPerson && perPerson > this.limitOf(x).maxPerPerson);
+    if (over.length) details.push(`Heads up: ${list(over.map((x) => `${x.name} ($${this.limitOf(x).maxPerPerson})`))} shared a spending limit, and this is above it.`);
     const b = { id: `b${this.bookings.length + 1}`, kind, title, details, total, perPerson, n, votes: {}, status: 'pending', code: null, by: p.pcode };
     this.bookings.push(b);
     this.pushChat({ from: 'AI', name: 'AI', kind: 'booking', bookingId: b.id, text: `${p.name} asked me to book. ${title}. Split ${n} ways: $${perPerson.toFixed(2)} each. Is the price right for everyone?` });
@@ -414,7 +439,8 @@ export class Table {
 
   onTick() {
     if (this.stage === 'chat' && this.mode === 'listen' && this.listening()) this.listen();
-    if (this.stage === 'chat' || this.stage === 'confirm') this.broadcast(); // keeps panels and counts fresh
+    // Every change already broadcasts; this slower refresh only keeps quiet-member lists and counts current.
+    if ((this.stage === 'chat' || this.stage === 'confirm') && Date.now() - this.lastBroadcast > 5000) this.broadcast();
   }
 
   // ---------- host controls (Wizard of Oz) ----------
@@ -443,7 +469,7 @@ export class Table {
     const open = this.stage === 'wrap' || this.stage === 'done';
     const final = this.deal ? this.deal.plan : this.plan;
     return {
-      id: this.id, stage: this.stage, stageEndsAt: this.stageEndsAt, serverNow: Date.now(), mode: this.mode,
+      id: this.id, number: this.number, stage: this.stage, stageEndsAt: this.stageEndsAt, serverNow: Date.now(), mode: this.mode,
       durations: Object.fromEntries(Object.entries(DURATIONS).map(([k, v]) => [k, v * SCALE])),
       task: { id: this.task.id, title: this.task.title, short: this.task.short, prompt: this.task.prompt, fields: this.task.fields.map((f) => ({ id: f.id, name: f.name, options: f.options.map((x) => ({ id: x.id, name: x.name })) })) },
       me: me ? {
@@ -474,8 +500,8 @@ export class Table {
 
   hostView() {
     return {
-      id: this.id, stage: this.stage, stageEndsAt: this.stageEndsAt, serverNow: Date.now(), secondsLeft: this.secondsLeft(),
-      mode: this.mode, task: this.task.short, summary: this.summaryText(), plan: this.plan, deal: this.deal, outcome: this.outcome,
+      id: this.id, number: this.number, stage: this.stage, stageEndsAt: this.stageEndsAt, serverNow: Date.now(), secondsLeft: this.secondsLeft(),
+      mode: this.mode, task: this.task.short, taskTitle: this.task.title, summary: this.summaryText(), plan: this.plan, deal: this.deal, outcome: this.outcome,
       aiPaused: this.aiPaused, pausedBy: this.pausedBy, interjections: this.interjections,
       players: this.players.map((p) => ({ pcode: p.pcode, name: p.name, isAI: p.isAI, msgs: p.msgs, accepted: !!this.accepts[p.key], limitUp: p.limitSharedAt !== null || p.limitMentionedAt !== null })),
       chat: this.chat.slice(-12).map((m) => ({ ...m, to: m.to ? this.player(m.to)?.name : null })), pendingQuestions: this.pendingQuestions
@@ -483,6 +509,7 @@ export class Table {
   }
 
   broadcast() {
+    this.lastBroadcast = Date.now();
     for (const p of this.humans()) this.io.to(`k:${p.key}`).emit('game:state', this.viewFor(p.key));
     this.io.to(`host:${this.room.code}`).emit('host:table', this.hostView());
   }

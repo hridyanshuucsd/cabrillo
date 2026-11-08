@@ -28,7 +28,7 @@ export default function Game() {
     <div className="wrap stack">
       <div className="stagebar">
         <div className="row between">
-          <span className="chip ok">{idx + 1} of 4 · {TITLES[g.stage]}</span>
+          <span className="row" style={{ gap: 6 }}>{g.kind === 'class' && <span className="chip">Table {g.number}</span>}<span className="chip ok">{idx + 1} of 4 · {TITLES[g.stage]}</span></span>
           <span className="timer" aria-live="off">{g.stage === 'done' ? 'Finished' : `${mmss(left)} left`}</span>
         </div>
         <div className="progress" aria-hidden="true">{STAGES.map((s, i) => <div key={s} className={i <= idx ? 'on' : ''} />)}</div>

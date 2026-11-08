@@ -9,7 +9,11 @@ import { q, migrate } from './db.js';
 import { authRoutes, identityFromReq, identityFromSocket } from './auth.js';
 import { Lobby } from './lobby.js';
 import { aiMode } from './ai.js';
-import { TASKS, DEFAULT_TASK } from './tasks.js';
+import { TASKS, DEFAULT_TASK, MIXED } from './tasks.js';
+
+// A crash would end every table at once, so log unexpected errors instead of exiting.
+process.on('unhandledRejection', (e) => console.error('unhandled rejection', e));
+process.on('uncaughtException', (e) => console.error('uncaught exception', e));
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -26,7 +30,7 @@ const lobby = new Lobby(io);
 
 authRoutes(app);
 app.get('/api/health', (req, res) => res.json({ ok: true, ai: aiMode() }));
-app.get('/api/tasks', (req, res) => res.json(Object.values(TASKS).map((t) => ({ id: t.id, title: t.title, prompt: t.prompt }))));
+app.get('/api/tasks', (req, res) => res.json(Object.values(TASKS).map((t) => ({ id: t.id, title: t.title, short: t.short, prompt: t.prompt }))));
 
 const needUser = (req, res) => { const id = identityFromReq(req); if (!id) res.status(401).json({ error: 'Please sign in first.' }); return id; };
 
@@ -36,10 +40,11 @@ app.post('/api/rooms', async (req, res) => {
   if (kind === 'class' && id.isGuest) return res.status(403).json({ error: 'Please sign in with an account to host a class session.' });
   let survey = String(req.body.surveyUrl || '').trim();
   if (survey && !/^https:\/\//.test(survey)) return res.status(400).json({ error: 'The feedback survey link must start with https://' });
-  const task = TASKS[req.body.task] ? req.body.task : DEFAULT_TASK;
+  const task = TASKS[req.body.task] ? req.body.task : (req.body.task === MIXED && kind === 'class' ? MIXED : DEFAULT_TASK);
+  const groupSize = [3, 4, 5].includes(Number(req.body.groupSize)) ? Number(req.body.groupSize) : 4;
   const aiMode = ['listen', 'ask', 'compare'].includes(req.body.aiMode) ? req.body.aiMode : 'listen';
   if (aiMode === 'compare' && kind !== 'class') return res.status(400).json({ error: 'Comparing AI modes is only for class sessions.' });
-  const room = await lobby.createRoom(kind, id, survey || null, task, aiMode);
+  const room = await lobby.createRoom(kind, id, survey || null, task, aiMode, groupSize);
   res.json({ code: room.code, kind: room.kind });
 });
 
@@ -47,7 +52,7 @@ app.get('/api/rooms/:code', async (req, res) => {
   const room = await lobby.getRoom(req.params.code);
   if (!room) return res.status(404).json({ error: 'No room with that code.' });
   const id = identityFromReq(req);
-  res.json({ code: room.code, kind: room.kind, task: room.task, aiMode: room.aiMode, isOwner: !!id && id.key === room.ownerKey });
+  res.json({ code: room.code, kind: room.kind, task: room.task, aiMode: room.aiMode, groupSize: room.groupSize, isOwner: !!id && id.key === room.ownerKey });
 });
 
 app.get('/api/history', async (req, res) => {
@@ -112,11 +117,13 @@ io.on('connection', (socket) => {
   socket.join(`k:${id.key}`);
   const table = (sid) => { const t = lobby.tables.get(String(sid || '')); return t && t.player(id.key) ? t : null; };
   const ack = (cb, v) => typeof cb === 'function' && cb(v);
+  // Wrap async handlers so a database hiccup returns an error to one person instead of crashing the server.
+  const safe = (fn) => async (payload, cb) => { try { await fn(payload || {}, cb); } catch (e) { console.error('socket handler failed', e); ack(cb, { error: 'Something went wrong. Please try again.' }); } };
 
-  socket.on('room:join', async ({ code }, cb) => ack(cb, await lobby.join(code, id, socket)));
+  socket.on('room:join', safe(async ({ code }, cb) => ack(cb, await lobby.join(code, id, socket))));
   socket.on('room:leave', ({ code }) => lobby.leave(code, id.key));
-  socket.on('room:start', async ({ code }, cb) => ack(cb, await lobby.start(code, id.key)));
-  socket.on('quick:join', async (_, cb) => ack(cb, await lobby.join('QUICK', id, socket)));
+  socket.on('room:start', safe(async ({ code }, cb) => ack(cb, await lobby.start(code, id.key))));
+  socket.on('quick:join', safe(async (_, cb) => ack(cb, await lobby.join('QUICK', id, socket))));
 
   socket.on('game:join', ({ sessionId }, cb) => {
     const t = lobby.tables.get(String(sessionId || ''));
@@ -135,17 +142,17 @@ io.on('connection', (socket) => {
 
   // Host console: watch tables, advance stages, pause the AI and speak for it (Wizard of Oz).
   const hostRoom = async (code) => { const room = await lobby.getRoom(code); return room && room.ownerKey === id.key ? room : null; };
-  socket.on('host:watch', async ({ code }, cb) => {
+  socket.on('host:watch', safe(async ({ code }, cb) => {
     const room = await hostRoom(code); if (!room) return ack(cb, { error: 'Only the host can open this console.' });
     socket.join(`host:${room.code}`); socket.join(`room:${room.code}`);
     lobby.emitRoom(room);
     room.tableIds.forEach((tid) => { const t = lobby.tables.get(tid); if (t) socket.emit('host:table', t.hostView()); });
     ack(cb, { ok: true });
-  });
+  }));
   const hostTable = async (code, sid) => { const room = await hostRoom(code); const t = room && lobby.tables.get(sid); return t && t.room.code === room.code ? t : null; };
-  socket.on('host:advance', async ({ code, sessionId }) => (await hostTable(code, sessionId))?.hostAdvance());
-  socket.on('host:pause', async ({ code, sessionId, paused }) => (await hostTable(code, sessionId))?.hostPause(paused));
-  socket.on('host:say', async ({ code, sessionId, text }) => (await hostTable(code, sessionId))?.hostSay(text));
+  socket.on('host:advance', safe(async ({ code, sessionId }) => (await hostTable(code, sessionId))?.hostAdvance()));
+  socket.on('host:pause', safe(async ({ code, sessionId, paused }) => (await hostTable(code, sessionId))?.hostPause(paused)));
+  socket.on('host:say', safe(async ({ code, sessionId, text }) => (await hostTable(code, sessionId))?.hostSay(text)));
 
   socket.on('disconnect', () => lobby.dropSocket(socket.id));
 });
