@@ -105,6 +105,7 @@ try {
   await a.getByText(/paused the AI/).first().waitFor();
   check('anyone can pause the AI', true);
   await b.getByRole('button', { name: 'Resume AI' }).click();
+  await c.locator('.limit-bar').click();
   await c.getByRole('button', { name: 'Post my limit to the group' }).click();
   await a.getByText('shared a limit').first().waitFor();
   check('a shared limit reaches the others', true);

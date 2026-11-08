@@ -77,8 +77,8 @@ export default function Home() {
           <div className="stack">
             <label className="field">Scenario
               <select value={classTask} onChange={(e) => setClassTask(e.target.value)}>
-                <option value="mixed">A different scenario for each table (recommended)</option>
-                {tasks.map((t) => <option key={t.id} value={t.id}>Every table: {t.title}</option>)}
+                <option value="mixed">A different one for each table</option>
+                {tasks.map((t) => <option key={t.id} value={t.id}>All tables: {t.short || t.title}</option>)}
               </select>
             </label>
             <label className="field">People per table

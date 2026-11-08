@@ -318,7 +318,7 @@ export class Table {
     }
     const hasWhere = this.task.fields.some((f) => f.id === 'where');
     if (!hasWhere) {
-      this.aiSay('In this demo I can book rides and restaurant tables for outings and socials, not for this task.', 'booking_unavailable', { kind }, true);
+      this.aiSay('In this demo I can book a ride or a table only when the plan has a place to go, and this one does not.', 'booking_unavailable', { kind }, true);
       return;
     }
     const where = this.choice('where'), when = this.choice('when'), budget = this.choice('budget');

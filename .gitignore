@@ -6,3 +6,4 @@ client/dist
 *.log
 test-shots
 .loaddb/
+.mobiledb/

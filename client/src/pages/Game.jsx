@@ -6,6 +6,23 @@ import TopBar from '../components/Brand.jsx';
 const STAGES = ['setup', 'chat', 'confirm', 'wrap'];
 const TITLES = { setup: 'Set up', chat: 'Chat', confirm: 'Confirm', wrap: 'Wrap up', done: 'Wrap up' };
 
+// On phones the chat stages fill the screen like a messaging app. visualViewport gives the height above the
+// on-screen keyboard (iOS does not shrink 100dvh for the keyboard), so the message box stays visible while typing.
+function useAppHeight(active) {
+  useEffect(() => {
+    if (!active) return;
+    const vv = window.visualViewport;
+    const set = () => {
+      document.documentElement.style.setProperty('--app-h', `${vv ? vv.height : window.innerHeight}px`);
+      if (vv && vv.offsetTop) window.scrollTo(0, 0);
+    };
+    set();
+    vv?.addEventListener('resize', set); vv?.addEventListener('scroll', set); window.addEventListener('resize', set);
+    document.body.classList.add('app-locked'); document.documentElement.classList.add('app-locked');
+    return () => { vv?.removeEventListener('resize', set); vv?.removeEventListener('scroll', set); window.removeEventListener('resize', set); document.body.classList.remove('app-locked'); document.documentElement.classList.remove('app-locked'); };
+  }, [active]);
+}
+
 export default function Game() {
   const { id } = useParams();
   const [g, setG] = useState(null);
@@ -18,27 +35,69 @@ export default function Game() {
     return () => s.off('connect', join);
   }, [id]);
   const left = useCountdown(g?.stageEndsAt, g?.serverNow);
+  const shell = g && (g.stage === 'chat' || g.stage === 'confirm');
+  useAppHeight(shell);
 
   if (error) return <div className="wrap stack"><TopBar back /><div className="error">{error}</div><Link className="btn" to="/">Back home</Link></div>;
   if (!g) return <div className="wrap muted">Joining your table...</div>;
   const send = (ev, extra) => getSocket().emit(ev, { sessionId: id, ...extra });
-  const idx = STAGES.indexOf(g.stage === 'done' ? 'wrap' : g.stage);
+  const header = <StageHeader g={g} left={left} />;
 
+  if (g.stage === 'chat') return <div className="shell">{header}<ChatStage g={g} send={send} /></div>;
+  if (g.stage === 'confirm') return <div className="shell">{header}<ConfirmStage g={g} send={send} /></div>;
   return (
-    <div className="wrap stack">
-      <div className="stagebar">
-        <div className="row between">
-          <span className="row" style={{ gap: 6 }}>{g.kind === 'class' && <span className="chip">Table {g.number}</span>}<span className="chip ok">{idx + 1} of 4 · {TITLES[g.stage]}</span></span>
-          <span className="timer" aria-live="off">{g.stage === 'done' ? 'Finished' : `${mmss(left)} left`}</span>
-        </div>
-        <div className="progress" aria-hidden="true">{STAGES.map((s, i) => <div key={s} className={i <= idx ? 'on' : ''} />)}</div>
-      </div>
+    <div className="wrap stack page">
+      {header}
       {g.stage === 'setup' && <Setup g={g} send={send} />}
-      {g.stage === 'chat' && <ChatStage g={g} send={send} />}
-      {g.stage === 'confirm' && <Confirm g={g} send={send} />}
       {(g.stage === 'wrap' || g.stage === 'done') && <Wrap g={g} />}
-      {g.stage !== 'done' && <Chat g={g} send={send} />}
+      {g.stage === 'wrap' && <Thread g={g} send={send} title="Group chat" />}
     </div>
+  );
+}
+
+function StageHeader({ g, left }) {
+  const idx = STAGES.indexOf(g.stage === 'done' ? 'wrap' : g.stage);
+  return (
+    <header className="stagebar">
+      <div className="row between">
+        <span className="row" style={{ gap: 6, minWidth: 0 }}>
+          {g.kind === 'class' && <span className="chip">Table {g.number}</span>}
+          <span className="chip ok">{idx + 1} of 4 · {TITLES[g.stage]}</span>
+        </span>
+        <span className="timer" aria-live="off">{g.stage === 'done' ? 'Finished' : `${mmss(left)} left`}</span>
+      </div>
+      <div className="progress" aria-hidden="true">{STAGES.map((s, i) => <div key={s} className={i <= idx ? 'on' : ''} />)}</div>
+    </header>
+  );
+}
+
+// A panel that slides up from the bottom of the screen; closes with the button, a tap outside, or Escape.
+function Sheet({ title, onClose, children }) {
+  useEffect(() => { const k = (e) => e.key === 'Escape' && onClose(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="sheet" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-head"><strong>{title}</strong><button className="btn ghost small" onClick={onClose}>Close</button></div>
+        <div className="sheet-body stack">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// Your private limit, folded to one line on the chat screens; tap to read it in full and to post it.
+function LimitBar({ g, send }) {
+  const [open, setOpen] = useState(false);
+  const l = g.me.limit;
+  const shared = l.sharedAt !== null;
+  return (
+    <>
+      <button className="limit-bar" aria-expanded={open} onClick={() => setOpen(true)}>
+        <span className="label" style={{ color: '#2f4ea0' }}>{shared ? 'Your limit · shared' : 'Your private limit'}</span>
+        <span className="limit-text">{l.text}</span>
+        {g.stage === 'confirm' && l.ok !== null && <span className={`chip ${l.ok ? 'ok' : 'warn'}`}>{l.ok ? 'Plan works' : 'Plan breaks it'}</span>}
+      </button>
+      {open && <Sheet title="Your private limit" onClose={() => setOpen(false)}><LimitCard g={g} send={(ev) => { send(ev); setOpen(false); }} /></Sheet>}
+    </>
   );
 }
 
@@ -96,100 +155,144 @@ function Setup({ g, send }) {
       <p className="small muted" style={{ margin: 0 }}>{g.mode === 'listen'
         ? 'The chat starts only when everyone taps "I am ready". By tapping it you agree that the AI may read this table\'s chat to keep the Plan so far. It speaks up at most twice, and anyone can pause it.'
         : 'The chat starts only when everyone taps "I am ready". At this table the AI reads a message only when someone starts it with @AI.'}</p>
-      <button className="btn block" disabled={g.me.ready} onClick={() => send('game:ready')}>{g.me.ready ? 'Waiting for the others...' : 'I am ready'}</button>
+      <div className="sticky-foot"><button className="btn block" disabled={g.me.ready} onClick={() => send('game:ready')}>{g.me.ready ? 'Waiting for the others...' : 'I am ready'}</button></div>
     </>
   );
 }
 
 const STATUS = { open: ['Not discussed', ''], split: ['Undecided', 'warn'], leaning: ['Leaning', ''], agreed: ['Most agree', 'ok'] };
 
-function PlanPanel({ g, send }) {
+// Compact Plan so far: one tile per plan field, always visible above the chat; "Details" shows who said what.
+function PlanStrip({ g, send }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="card stack" aria-label="Plan so far">
+    <section className="plan-strip" aria-label="Plan so far">
       <div className="row between">
-        <div><div className="label">Plan so far</div><div className="small muted">Kept by the AI from your chat</div></div>
-        <button className="btn ghost small" onClick={() => send('game:pause-ai', { paused: !g.pausedBy })}>{g.pausedBy ? 'Resume AI' : 'Pause AI'}</button>
+        <span className="label">Plan so far</span>
+        <span className="row" style={{ gap: 6 }}>
+          <button className="btn ghost tiny" onClick={() => setOpen(true)}>Details</button>
+          <button className="btn ghost tiny" onClick={() => send('game:pause-ai', { paused: !g.pausedBy })}>{g.pausedBy ? 'Resume AI' : 'Pause AI'}</button>
+        </span>
       </div>
       {g.pausedBy && <div className="chip warn">Paused by {g.pausedBy}. The AI is not reading the chat.</div>}
       {g.aiPaused && <div className="chip ai">A teammate is running the AI by hand</div>}
-      {g.panel.map((f) => (
-        <div key={f.id} className="plan-row">
-          <div className="row between"><strong>{f.name}</strong><span className={`chip ${STATUS[f.status][1]}`}>{STATUS[f.status][0]}</span></div>
-          {f.options.length ? (
-            <div className="stack" style={{ gap: 2, marginTop: 4 }}>
-              {f.options.map((o) => <div key={o.option} className="small"><span style={{ fontWeight: o.option === f.leader ? 800 : 500 }}>{o.name}</span> <span className="muted">· {o.who.join(', ')}</span></div>)}
+      <div className="plan-tiles">
+        {g.panel.map((f) => {
+          const lead = f.options.find((o) => o.option === f.leader) || f.options[0];
+          return (
+            <div key={f.id} className={`plan-tile ${f.status}`}>
+              <span className="tile-name">{f.name}{f.status !== 'open' && <span className="tile-status"> · {STATUS[f.status][0]}</span>}</span>
+              <span className="tile-value">{lead ? lead.name : 'Not discussed'}</span>
             </div>
-          ) : <div className="small muted" style={{ marginTop: 4 }}>Nobody has mentioned this yet.</div>}
-        </div>
-      ))}
-      {g.quiet.length > 0 && <div className="small muted">Not heard from yet: {g.quiet.join(', ')}</div>}
-    </div>
+          );
+        })}
+      </div>
+      {open && (
+        <Sheet title="Plan so far" onClose={() => setOpen(false)}>
+          <p className="small muted" style={{ margin: 0 }}>Kept by the AI from your chat. Names show who mentioned each option.</p>
+          {g.panel.map((f) => (
+            <div key={f.id} className="plan-row">
+              <div className="row between"><strong>{f.name}</strong><span className={`chip ${STATUS[f.status][1]}`}>{STATUS[f.status][0]}</span></div>
+              {f.options.length ? (
+                <div className="stack" style={{ gap: 2, marginTop: 4 }}>
+                  {f.options.map((o) => <div key={o.option} className="small"><span style={{ fontWeight: o.option === f.leader ? 800 : 500 }}>{o.name}</span> <span className="muted">· {o.who.join(', ')}</span></div>)}
+                </div>
+              ) : <div className="small muted" style={{ marginTop: 4 }}>Nobody has mentioned this yet.</div>}
+            </div>
+          ))}
+          {g.quiet.length > 0 && <div className="small muted">Not heard from yet: {g.quiet.join(', ')}</div>}
+        </Sheet>
+      )}
+    </section>
   );
 }
 
-function ReadyToConfirm({ g, send }) {
+function ReadyButton({ g, send }) {
   const humans = g.players.filter((p) => !p.isAI);
   const n = humans.filter((p) => p.confirmReady).length;
   return (
-    <div className="card row between">
-      <span className="small"><strong>{n} of {humans.length}</strong> ready to confirm</span>
-      <button className="btn small" disabled={g.me.confirmReady} onClick={() => send('game:confirm-ready')}>{g.me.confirmReady ? 'Waiting for others' : 'Ready to confirm'}</button>
-    </div>
+    <button className="btn small ready-btn" disabled={g.me.confirmReady} onClick={() => send('game:confirm-ready')}
+      aria-label={g.me.confirmReady ? 'Waiting for others' : 'Ready to confirm'}>
+      {g.me.confirmReady ? 'Waiting' : <>Ready<span className="long"> to confirm</span></>} <span className="count">{n}/{humans.length}</span>
+    </button>
   );
 }
 
 function ChatStage({ g, send }) {
   return (
     <>
-      {g.mode === 'listen' ? <PlanPanel g={g} send={send} /> : (
-        <div className="card small" style={{ background: 'var(--primary-tint)', border: 0 }}>The AI at this table answers only when someone asks it. Type <strong>@AI</strong> in a message or use <strong>Ask the AI</strong>.</div>
-      )}
-      <ReadyToConfirm g={g} send={send} />
-      <LimitCard g={g} send={send} compact />
+      <div className="shell-top">
+        {g.mode === 'listen' ? <PlanStrip g={g} send={send} /> : (
+          <div className="hint">This AI answers only when asked. Start a message with <strong>@AI</strong> or tap <strong>Ask AI</strong>.</div>
+        )}
+        <div className="row" style={{ gap: 8 }}>
+          <div className="grow"><LimitBar g={g} send={send} /></div>
+          <ReadyButton g={g} send={send} />
+        </div>
+      </div>
+      <Thread g={g} send={send} fill />
     </>
   );
 }
 
-function Confirm({ g, send }) {
+function ConfirmStage({ g, send }) {
+  const [tab, setTab] = useState('plan');
+  // Count new messages by id: the server sends only the latest 80, so the list length stops growing.
+  const lastId = g.chat.length ? g.chat[g.chat.length - 1].id : 0;
+  const [seen, setSeen] = useState(lastId);
+  useEffect(() => { if (tab === 'chat') setSeen(lastId); }, [tab, lastId]);
+  const unread = tab === 'plan' ? g.chat.filter((m) => m.id > seen && m.from !== g.me.pcode).length : 0;
   const humans = g.players.filter((p) => !p.isAI);
   const accepted = humans.filter((p) => p.accepted).length;
   return (
     <>
-      <div className="row between"><h2 style={{ margin: 0 }}>Final plan</h2><span className={`chip ${g.complete ? 'ok' : 'warn'}`}>{g.complete ? 'Complete' : 'Not complete'}</span></div>
-      {g.task.fields.map((f) => (
-        <div key={f.id} className="card stack" style={{ gap: 8 }}>
-          <strong>{f.name}</strong>
-          <div className="pick" role="group" aria-label={f.name}>
-            {f.options.map((o) => <button key={o.id} className={g.plan[f.id] === o.id ? 'on' : ''} aria-pressed={g.plan[f.id] === o.id} disabled={!!g.deal} onClick={() => send('game:set', { field: f.id, option: o.id })}>{o.name}</button>)}
-          </div>
-        </div>
-      ))}
-      <p className="small muted" style={{ margin: 0 }}>Anyone can change a choice. Any change clears everyone's Accept.</p>
-      <div className="card stack">
-        <div className="row between"><span className="label">Accepted</span><strong>{accepted} of {humans.length} people</strong></div>
-        <div className="meter"><div style={{ width: `${(accepted / humans.length) * 100}%` }} /></div>
-        <div className="row wrap-row">{g.players.map((p) => <span key={p.pcode} className={`chip ${p.isAI ? 'ai' : p.accepted ? 'ok' : ''}`}>{p.name}{p.isYou ? ' (you)' : ''}: {p.isAI ? 'no vote' : p.accepted ? 'accepts' : 'not yet'}</span>)}</div>
-        <button className={`btn block ${g.me.accepted ? 'ghost' : ''}`} disabled={!!g.deal} onClick={() => send('game:accept', { value: !g.me.accepted })}>
-          {g.deal ? 'Plan locked' : g.me.accepted ? 'Withdraw my acceptance' : 'Accept this plan'}
-        </button>
+      <div className="tabs" role="tablist">
+        <button role="tab" aria-selected={tab === 'plan'} className={tab === 'plan' ? 'on' : ''} onClick={() => setTab('plan')}>Final plan</button>
+        <button role="tab" aria-selected={tab === 'chat'} className={tab === 'chat' ? 'on' : ''} onClick={() => setTab('chat')}>Chat{unread ? <span className="dot">{unread}</span> : null}</button>
       </div>
-      <LimitCard g={g} send={send} compact />
+      {tab === 'chat' ? <Thread g={g} send={send} fill /> : (
+        <>
+          <div className="shell-scroll stack">
+            <div className="row between"><h2 style={{ margin: 0 }}>Final plan</h2><span className={`chip ${g.complete ? 'ok' : 'warn'}`}>{g.complete ? 'Complete' : 'Not complete'}</span></div>
+            <p className="small muted" style={{ margin: 0 }}>Anyone can change a choice. Any change clears everyone's Accept.</p>
+            {g.task.fields.map((f) => (
+              <div key={f.id} className="card stack" style={{ gap: 8 }}>
+                <strong>{f.name}</strong>
+                <div className="pick" role="group" aria-label={f.name}>
+                  {f.options.map((o) => <button key={o.id} className={g.plan[f.id] === o.id ? 'on' : ''} aria-pressed={g.plan[f.id] === o.id} disabled={!!g.deal} onClick={() => send('game:set', { field: f.id, option: o.id })}>{o.name}</button>)}
+                </div>
+              </div>
+            ))}
+            <LimitBar g={g} send={send} />
+            <div className="row wrap-row">{g.players.map((p) => <span key={p.pcode} className={`chip ${p.isAI ? 'ai' : p.accepted ? 'ok' : ''}`}>{p.name}{p.isYou ? ' (you)' : ''}: {p.isAI ? 'no vote' : p.accepted ? 'accepts' : 'not yet'}</span>)}</div>
+          </div>
+          <div className="shell-foot stack" style={{ gap: 8 }}>
+            <div className="row between small"><span className="label">Accepted</span><strong>{accepted} of {humans.length} people</strong></div>
+            <div className="meter"><div style={{ width: `${(accepted / humans.length) * 100}%` }} /></div>
+            <button className={`btn block ${g.me.accepted ? 'ghost' : ''}`} disabled={!!g.deal} onClick={() => send('game:accept', { value: !g.me.accepted })}>
+              {g.deal ? 'Plan locked' : g.me.accepted ? 'Withdraw my acceptance' : 'Accept this plan'}
+            </button>
+          </div>
+        </>
+      )}
     </>
   );
 }
 
-function Chat({ g, send }) {
+// The message list and the message box. With fill, it takes the rest of the screen and the box sits at the bottom.
+function Thread({ g, send, fill, title }) {
   const [text, setText] = useState('');
   const box = useRef(null);
-  useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight; }, [g.chat.length]);
-  const go = (ev) => { if (!text.trim()) return; send(ev, { text }); setText(''); };
-  const open = g.stage !== 'wrap';
+  const nearBottom = useRef(true);
+  useEffect(() => { if (box.current && nearBottom.current) box.current.scrollTop = box.current.scrollHeight; }, [g.chat.length, g.bookings]);
+  const go = (ev) => { if (!text.trim()) return; send(ev, { text }); setText(''); nearBottom.current = true; };
+  const open = g.stage === 'chat' || g.stage === 'confirm';
   return (
-    <div className="card stack">
-      <div className="row between"><span className="label">Group chat</span></div>
-      <div className="chat" ref={box} aria-live="polite">
+    <section className={fill ? 'thread fill' : 'card stack'}>
+      {title && <span className="label">{title}</span>}
+      <div className="chat" ref={box} aria-live="polite" onScroll={(e) => { const el = e.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
         {g.chat.map((m) => m.kind === 'booking' ? <BookingCard key={m.id} b={(g.bookings || []).find((x) => x.id === m.bookingId)} send={send} /> : (
-          <div key={m.id} className={`msg ${m.kind === "chat" ? "human" : m.kind}`}>
+          <div key={m.id} className={`msg ${m.kind === 'chat' ? (m.from === g.me.pcode ? 'human mine' : 'human') : m.kind}`}>
             {(m.kind === 'ai' || m.kind === 'private') && <span className="chip ai" style={{ marginRight: 6, padding: '1px 7px' }}>AI</span>}
             {m.kind === 'private' && <span className="chip" style={{ marginRight: 6, padding: '1px 7px' }}>Only you see this</span>}
             {m.kind !== 'system' && <span className="who">{m.kind === 'limit' ? `${m.name} shared a limit` : m.kind === 'question' ? `${m.name} asked the AI` : m.name}:</span>} {m.text}
@@ -197,15 +300,13 @@ function Chat({ g, send }) {
         ))}
       </div>
       {open && (
-        <>
-          <form className="row" onSubmit={(e) => { e.preventDefault(); go('game:chat'); }}>
-            <input type="text" className="grow" value={text} maxLength={300} onChange={(e) => setText(e.target.value)} placeholder="Message the group" aria-label="Message" />
-            <button className="btn small">Send</button>
-          </form>
-          <button className="btn ghost small" type="button" onClick={() => go('game:ask')} disabled={!text.trim()}>Ask the AI instead</button>
-        </>
+        <form className="composer" onSubmit={(e) => { e.preventDefault(); go('game:chat'); }}>
+          <button className="btn ghost small ask" type="button" onClick={() => go('game:ask')} disabled={!text.trim()} aria-label="Ask the AI instead">Ask AI</button>
+          <input type="text" className="grow" value={text} maxLength={300} onChange={(e) => setText(e.target.value)} placeholder="Message" aria-label="Message" enterKeyHint="send" autoComplete="off" />
+          <button className="btn small">Send</button>
+        </form>
       )}
-    </div>
+    </section>
   );
 }
 

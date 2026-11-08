@@ -39,14 +39,14 @@ export default function Host() {
           </button>
           <p className="small muted" style={{ margin: 0 }}>Tables of about {room?.groupSize || 4} (never fewer than 3 or more than 5). Late arrivals wait here; press Start again. One or two late arrivals join a table that is still in Set up{room?.openSeats ? ` (${room.openSeats} can take them now)` : ''}; otherwise they get a new table with AI players in the empty seats.</p>
         </div>
-        <div className="card stack" style={{ flex: '1 1 220px' }}>
-          <div className="label">Download data (CSV)</div>
-          {['logs.csv', 'players.csv', 'sessions.csv', 'feedback.csv'].map((f) => <a key={f} href={exp(f)}>{f}</a>)}
-          <p className="small muted" style={{ margin: 0 }}>Codes only, no names or emails.</p>
-        </div>
       </div>
       <h2>Tables ({list.length}{list.length ? `, ${live} still running` : ''})</h2>
       <div className="grid-tables">{list.map((t) => <TableCard key={t.id} t={t} code={code} />)}</div>
+      <div className="card stack">
+        <div className="label">Download data (CSV)</div>
+        <div className="row wrap-row" style={{ gap: 14 }}>{['logs.csv', 'players.csv', 'sessions.csv', 'feedback.csv'].map((f) => <a key={f} href={exp(f)}>{f}</a>)}</div>
+        <p className="small muted" style={{ margin: 0 }}>Codes only, no names or emails.</p>
+      </div>
     </div>
   );
 }
@@ -54,10 +54,20 @@ export default function Host() {
 function TableCard({ t, code }) {
   const left = useCountdown(t.stageEndsAt, t.serverNow);
   const [say, setSay] = useState('');
+  // On a phone the host sees one line per table and opens the ones that need attention; on a wide screen all are open.
+  const [open, setOpen] = useState(() => window.innerWidth >= 720);
   const send = (ev, extra) => getSocket().emit(ev, { code, sessionId: t.id, ...extra });
+  const head = (
+    <button className="table-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <span className="grow" style={{ minWidth: 0 }}><strong>Table {t.number} · {t.task}</strong><br />
+        <span className="small muted">{t.mode === 'listen' ? 'Listening AI' : 'Answer-only AI'} · {t.players.filter((p) => !p.isAI).length} people{t.pendingQuestions.length ? ' · question waiting' : ''}</span></span>
+      <span className={`chip ${t.pendingQuestions.length ? 'warn' : 'ok'}`}>{t.stage}{t.stage !== 'done' ? ` · ${mmss(left)}` : ''}</span>
+    </button>
+  );
+  if (!open) return <div className="card" style={{ padding: 0 }}>{head}</div>;
   return (
     <div className="card stack">
-      <div className="row between"><strong>Table {t.number} · {t.task}</strong><span className="chip ok">{t.stage}{t.stage !== 'done' ? ` · ${mmss(left)}` : ''}</span></div>
+      {head}
       <div className="row wrap-row"><span className="chip ai">{t.mode === 'listen' ? 'Listening AI' : 'Answer-only AI'}</span>{t.mode === 'listen' && <span className="chip">{t.interjections} of 2 interjections</span>}{t.pausedBy && <span className="chip warn">Paused by {t.pausedBy}</span>}</div>
       <div className="small"><strong>Plan so far:</strong> {t.summary}</div>
       {t.deal && <div className="chip ok">Plan locked</div>}
