@@ -80,7 +80,7 @@ try {
   await d.getByText(/easy by trolley or bus/).first().waitFor({ timeout: 8000 });
   check('@AI question gets an answer at the answer-only table', true);
   await say(d, '@AI can you book an uber for us?');
-  await d.getByText('Ride request').first().waitFor({ timeout: 5000 });
+  await d.getByRole('group', { name: /^Ride to / }).first().waitFor({ timeout: 6000 });
   check('answer-only AI books only when asked with @AI', true);
   await ask[1].getByRole('button', { name: 'Not for me' }).click();
   await d.getByText(/Not booked/).first().waitFor({ timeout: 5000 });
@@ -116,8 +116,8 @@ try {
 
   // ---------- booking demo: the AI prepares a table, everyone approves the price, then it books ----------
   await say(a, 'Can someone reserve a table for lunch after?');
-  await b.getByText('Table request').first().waitFor({ timeout: 5000 });
-  check('a booking request becomes a card everyone sees', (await c.getByText('Table request').count()) > 0);
+  await b.getByRole('group', { name: /^Booking: Table for/ }).first().waitFor({ timeout: 6000 });
+  check('a booking request becomes a card everyone sees', (await c.getByRole('group', { name: /^Booking: Table for/ }).count()) > 0);
   await a.getByRole('button', { name: 'Price looks right' }).click();
   await b.getByRole('button', { name: 'Price looks right' }).click();
   await shot(c, '09_booking_pending');

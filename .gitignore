@@ -7,3 +7,4 @@ client/dist
 test-shots
 .loaddb/
 .mobiledb/
+.cardsdb/

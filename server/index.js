@@ -127,6 +127,7 @@ io.on('connection', (socket) => {
   socket.on('host:start-all', safe(async ({ code }, cb) => ack(cb, await lobby.startAll(code, id.key))));
   socket.on('host:auto-start', safe(async ({ code, value }, cb) => ack(cb, await lobby.setAutoStart(code, id.key, value))));
   socket.on('game:typing', ({ sessionId }) => table(sessionId)?.typing(id.key));
+  socket.on('game:booking-option', ({ sessionId, bookingId, option }) => table(sessionId)?.bookingOption(id.key, String(bookingId), String(option)));
   socket.on('room:start', safe(async ({ code }, cb) => ack(cb, await lobby.start(code, id.key))));
   socket.on('quick:join', safe(async (_, cb) => ack(cb, await lobby.join('QUICK', id, socket))));
 

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, emit, getSocket, msToClock, mmss, useCountdown, useSocketEvent } from '../lib.js';
 import TopBar from '../components/Brand.jsx';
+import { MapCard, RideCard, TableCard } from '../components/Cards.jsx';
 
 const STAGES = ['setup', 'chat', 'confirm', 'wrap'];
 const TITLES = { forming: 'Waiting for your table', setup: 'Set up', chat: 'Chat', confirm: 'Confirm', wrap: 'Wrap up', done: 'Finished' };
@@ -42,7 +43,7 @@ export default function Game() {
   const [g, setG] = useState(null);
   const [error, setError] = useState('');
   const [typing, setTyping] = useState({}); // pcode -> { name, until }
-  useSocketEvent('game:state', useCallback((s) => { if (s.id === id) setG(s); }, [id]));
+  useSocketEvent('game:state', useCallback((s) => { if (s.id === id) setG({ ...s, clockOffset: s.serverNow - Date.now() }); }, [id]));
   useSocketEvent('game:typing', useCallback((t) => { if (t.sessionId === id) setTyping((x) => ({ ...x, [t.pcode]: { name: t.name, until: Date.now() + 3500 } })); }, [id]));
   useEffect(() => {
     const join = () => emit('game:join', { sessionId: id }).then((r) => r.error && setError(r.error));
@@ -343,7 +344,11 @@ function Messages({ g, send, typers }) {
     <div className="messages-wrap">
       <div className="messages" ref={box} aria-live="polite" onScroll={(e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; if (atBottom.current) setNewBelow(false); }}>
         {g.chat.map((m, i) => {
-          if (m.kind === 'booking') return <BookingCard key={m.id} b={(g.bookings || []).find((x) => x.id === m.bookingId)} send={send} />;
+          if (m.kind === 'booking') {
+            const b = (g.bookings || []).find((x) => x.id === m.bookingId);
+            return b?.kind === 'ride' ? <RideCard key={m.id} b={b} send={send} offset={g.clockOffset} /> : <TableCard key={m.id} b={b} send={send} />;
+          }
+          if (m.kind === 'map') return <MapCard key={m.id} m={(g.maps || []).find((x) => x.id === m.mapId)} />;
           if (m.kind === 'system') return <div key={m.id} className="m-system">{m.text}</div>;
           const prev = g.chat[i - 1];
           const mine = m.from === g.me.pcode;
@@ -397,32 +402,6 @@ function Composer({ g, send }) {
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 12l16-8-6 16-2.5-6.5L4 12z" fill="currentColor" /></svg>
       </button>
     </form>
-  );
-}
-
-const BOOK_STATUS = { pending: ['Waiting for everyone', ''], booked: ['Booked (demo)', 'ok'], declined: ['Not booked', 'warn'] };
-function BookingCard({ b, send }) {
-  if (!b) return null;
-  const [label, tone] = BOOK_STATUS[b.status];
-  return (
-    <div className="booking" role="group" aria-label={`Booking: ${b.title}`}>
-      <div className="row between" style={{ gap: 6 }}>
-        <span className="row" style={{ gap: 6 }}><span className="avatar ai small" aria-hidden="true">AI</span><strong>{b.kind === 'ride' ? 'Ride request' : 'Table request'}</strong></span>
-        <span className={`chip ${tone}`}>{label}</span>
-      </div>
-      <div className="booking-title">{b.title}</div>
-      {b.details.map((d) => <div key={d} className="small muted">{d}</div>)}
-      <div className="booking-split">Split {b.n} ways: <strong>${b.perPerson.toFixed(2)} each</strong></div>
-      {b.status === 'pending' && (b.mine === null
-        ? <div className="row" style={{ gap: 8 }}>
-            <button className="btn small grow" onClick={() => send('game:booking', { bookingId: b.id, value: true })}>Price looks right</button>
-            <button className="btn ghost small grow" onClick={() => send('game:booking', { bookingId: b.id, value: false })}>Not for me</button>
-          </div>
-        : <div className="small muted">You answered. Waiting for: {b.waiting.join(', ') || 'no one'}.</div>)}
-      {b.status === 'booked' && <div className="small">Confirmation {b.code}. Payment requests sent. Nothing was really booked or charged in this demo.</div>}
-      {b.status === 'declined' && <div className="small muted">Someone said the price does not work, so nothing was booked.</div>}
-      <div className="small muted">Approved: {b.approved.length ? b.approved.join(', ') : 'nobody yet'}</div>
-    </div>
   );
 }
 

@@ -3,6 +3,7 @@ import { taskById, fieldName, optionName, planComplete } from './tasks.js';
 import { applyMessage, buildPanel, findConflict } from './listener.js';
 import { q, logEvent } from './db.js';
 import { answerQuestion } from './ai.js';
+import { PICKUP, placeField, placeOf, placesOf, estimate, route, rideOptions, slotsFor, driver, driverStart } from './places.js';
 
 const SCALE = Number(process.env.TIME_SCALE || 1); // tests run faster with a smaller TIME_SCALE
 export const DURATIONS = { setup: 60, chat: 360, confirm: 120, wrap: 60 };
@@ -13,7 +14,9 @@ const COLORS = ['#2a78d6', '#eb6834', '#8f5bd6', '#1baf7a', '#c2410c'];
 // Booking demo: the AI can prepare a ride or a table, ask everyone to approve the price, and split it.
 // Nothing is really booked or charged; prices are fixed estimates for the study.
 const BOOK_RE = /\b(book|reserve|order|call|get|grab|schedule)\b.{0,30}\b(uber|lyft|ride|rideshare|cab|taxi|car|table|restaurant|reservation|spot|dinner|lunch)\b|\b(make|need|get) a reservation\b|\breserve a table\b/i;
-const RIDE_RE = /\b(uber|lyft|ride|rideshare|cab|taxi|car)\b/i;
+const RIDE_RE = /\b(uber|lyft|ride|rides|rideshare|cab|taxi|car|cars)\b/i;
+// "show us a map", "how far is it": the AI posts a map of the place options.
+const MAP_RE = /\b(map|how far|where is|where's|directions|distance|how long to get)\b/i;
 const FARE = { cove: 24, balboa: 16, oldtown: 18, torrey: 28, shores: 22, clubroom: 12, apartment: 14 };
 const PLACE = { cove: 'a cafe near La Jolla Cove', balboa: 'a cafe in Balboa Park', oldtown: 'a taco restaurant in Old Town', torrey: 'a cafe near Torrey Pines', shores: 'a grill near La Jolla Shores', clubroom: 'a pizza place near campus', apartment: 'a pizza place nearby' };
 const MEAL = { low: 13, mid: 24, high: 38, free: 10, under50: 10, over50: 18 };
@@ -23,6 +26,7 @@ const sec = (s) => s * SCALE * 1000;
 const rand = (a, b) => a + Math.random() * (b - a);
 const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const ASK_AI = /(^|\s)@ai\b/i;
+const optionName2 = (b) => b.options.find((o) => o.id === b.choice).name;
 const list = (names) => names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 export const firstPerson = (s) => s.replace(/told you/g, 'told me').replace(/\b[Yy]ou are\b/g, 'I am').replace(/\bYou\b/g, 'I').replace(/\byou\b/g, 'I').replace(/\bYour\b/g, 'My').replace(/\byour\b/g, 'my');
 
@@ -296,6 +300,7 @@ export class Table {
     this.log(p.pcode, 'chat_message', { text, stage: this.stage, length: text.length });
     this.read(p, text);
     if (this.mode === 'listen' && this.listening() && BOOK_RE.test(text)) this.proposeBooking(p, text);
+    else if (this.mode === 'listen' && this.listening() && MAP_RE.test(text)) this.showMap(p, text);
     this.broadcast();
   }
 
@@ -318,6 +323,7 @@ export class Table {
     this.log(p.pcode, 'question_asked', { text, stage: this.stage });
     this.read(p, text);
     if (BOOK_RE.test(text) && !this.aiPaused) { this.broadcast(); return this.proposeBooking(p, text); }
+    if (MAP_RE.test(text) && !this.aiPaused && placesOf(this.task).length) { this.broadcast(); return this.showMap(p, text, true); }
     if (this.aiPaused) { this.pendingQuestions.push({ pcode: p.pcode, name: p.name, text }); this.broadcast(); return; }
     this.broadcast();
     const recent = this.chat.filter((m) => !m.to && ['chat', 'question', 'limit'].includes(m.kind)).slice(-12).map((m) => `${this.byCode(m.from)?.pcode || m.from}: ${this.anonymize(m.text)}`).join('\n');
@@ -376,42 +382,80 @@ export class Table {
     if (plan[field]) return plan[field];
     return this.panel().find((f) => f.id === field)?.leader || null;
   }
-  proposeBooking(p, text) {
+  // A map of the place options with distance and drive time from campus. Asked for by a player, never unprompted.
+  showMap(p, text, asked) {
+    const places = placesOf(this.task);
+    if (!places.length) { if (asked) this.aiSay('There is no place to show on a map for this plan.', 'map_unavailable', {}, true); return; }
+    if (!asked && this.lastMapAt && Date.now() - this.lastMapAt < sec(60)) return;
+    this.lastMapAt = Date.now();
+    const field = placeField(this.task);
+    const m = { id: `m${(this.maps = this.maps || []).length + 1}`, field, leader: this.choice(field),
+      places: places.map((x) => ({ ...x, ...estimate(PICKUP, x) })), origin: PICKUP };
+    this.maps.push(m);
+    this.pushChat({ from: 'AI', name: 'AI', kind: 'map', mapId: m.id, text: `Map of the options, with drive times from campus: ${m.places.map((x) => `${x.name} ${x.minutes} min`).join(', ')}.` });
+    this.log('AI', 'map_shown', { id: m.id, requested_by: p.pcode, places: m.places.map((x) => x.id) });
+  }
+
+  // ---------- booking demo (future agent actions) ----------
+  // The AI prepares a ride (with car types, route and fare) or a table (with times), everyone approves the price,
+  // and the cost is split. Nothing is really booked or charged.
+  async proposeBooking(p, text) {
     if (!['setup', 'chat', 'confirm'].includes(this.stage)) return;
     const kind = RIDE_RE.test(text) ? 'ride' : 'table';
-    if (this.bookings.some((b) => b.kind === kind && b.status !== 'declined')) {
-      this.aiSay(`There is already a ${kind === 'ride' ? 'ride' : 'table'} request above. Approve or decline that one first.`, 'booking_duplicate', { kind }, true);
+    this.preparing = this.preparing || {};
+    if (this.preparing[kind] || this.bookings.some((b) => b.kind === kind && b.status !== 'declined')) {
+      if (!this.preparing[kind]) this.aiSay(`There is already a ${kind === 'ride' ? 'ride' : 'table'} request above. Approve or decline that one first.`, 'booking_duplicate', { kind }, true);
       return;
     }
-    const hasWhere = this.task.fields.some((f) => f.id === 'where');
-    if (!hasWhere) {
-      this.aiSay('In this demo I can book a ride or a table only when the plan has a place to go, and this one does not.', 'booking_unavailable', { kind }, true);
+    const field = placeField(this.task);
+    const placeId = field ? this.choice(field) : null;
+    const place = placeId ? placeOf(this.task, placeId) : null;
+    if (!field) { this.aiSay(`In this demo I can book a ${kind === 'ride' ? 'ride' : 'table'} only when the plan has a place to go, and this one does not.`, 'booking_unavailable', { kind }, true); return; }
+    if (!place) {
+      const named = placeId ? optionName(this.task, field, placeId) : null;
+      this.aiSay(named ? `${named} is not a place I can book for.` : `Pick a ${fieldName(this.task, field).toLowerCase()} first, and I will book ${kind === 'ride' ? 'the ride' : 'a table'} there.`, 'booking_needs_place', { kind }, true);
       return;
     }
-    const where = this.choice('where'), when = this.choice('when'), budget = this.choice('budget');
-    const n = this.players.length;
-    const placeName = where ? optionName(this.task, 'where', where) : 'the place you pick';
-    const whenName = when ? optionName(this.task, 'when', when) : 'the time you pick';
-    let title, details, total;
-    if (kind === 'ride') {
-      const cars = Math.ceil(n / 4), fare = this.opt('where', where)?.fare || FARE[where] || 20;
-      total = fare * cars;
-      title = `${cars > 1 ? `${cars} rides` : 'A ride'} to ${placeName}`;
-      details = [`${whenName}, pickup at UC San Diego`, `${n} people, ${cars} car${cars > 1 ? 's' : ''}`, `Estimated fare: $${total} total`];
-    } else {
-      const per = this.opt('budget', budget)?.per || MEAL[budget] || 20;
-      total = per * n;
-      title = `Table for ${n} at ${this.opt('where', where)?.place || PLACE[where] || 'a restaurant nearby'}`;
-      details = [whenName, `About $${per} per person${budget ? `, within your ${optionName(this.task, 'budget', budget)} budget` : ''}`, `Estimated total: $${total}`];
-    }
-    const perPerson = Math.round((total / n) * 100) / 100;
-    // The AI cannot see private cards, but it respects limits people chose to share.
-    const over = this.players.filter((x) => x.limitSharedAt !== null && this.limitOf(x).maxPerPerson && perPerson > this.limitOf(x).maxPerPerson);
-    if (over.length) details.push(`Heads up: ${list(over.map((x) => `${x.name} ($${this.limitOf(x).maxPerPerson})`))} shared a spending limit, and this is above it.`);
-    const b = { id: `b${this.bookings.length + 1}`, kind, title, details, total, perPerson, n, votes: {}, status: 'pending', code: null, by: p.pcode };
-    this.bookings.push(b);
-    this.pushChat({ from: 'AI', name: 'AI', kind: 'booking', bookingId: b.id, text: `${p.name} asked me to book. ${title}. Split ${n} ways: $${perPerson.toFixed(2)} each. Is the price right for everyone?` });
-    this.log('AI', 'booking_proposed', { id: b.id, kind, total, per_person: perPerson, requested_by: p.pcode, where, when });
+    this.preparing[kind] = true;
+    try {
+      const when = this.choice('when'), budget = this.choice('budget');
+      const whenName = when ? optionName(this.task, 'when', when) : null;
+      const n = this.players.length;
+      const b = { id: `b${this.bookings.length + 1}`, kind, n, votes: {}, status: 'pending', code: null, by: p.pcode, whenName, place };
+      if (kind === 'ride') {
+        const r = await route(PICKUP, place);
+        b.origin = PICKUP; b.route = r.points; b.miles = r.miles; b.minutes = r.minutes; b.routeSource = r.source;
+        b.options = rideOptions(r, n);
+        b.choice = b.options.reduce((x, y) => (y.total < x.total ? y : x)).id;
+        b.title = `Ride to ${place.name}`;
+      } else {
+        const per = this.opt('budget', budget)?.per || MEAL[budget] || 20;
+        b.restaurant = place.restaurant; b.per = per;
+        b.slots = slotsFor(whenName); b.slot = b.slots[1];
+        b.title = `Table for ${n} at ${place.restaurant}`;
+      }
+      this.price(b);
+      this.bookings.push(b);
+      this.pushChat({ from: 'AI', name: 'AI', kind: 'booking', bookingId: b.id, text: `${p.name} asked me to book. ${b.title}. Split ${n} ways: $${b.perPerson.toFixed(2)} each. Is the price right for everyone?` });
+      this.log('AI', 'booking_proposed', { id: b.id, kind, total: b.total, per_person: b.perPerson, requested_by: p.pcode, place: place.id, when, option: b.choice || b.slot, route: b.routeSource || null });
+      this.broadcast();
+    } finally { this.preparing[kind] = false; }
+  }
+  price(b) {
+    if (b.kind === 'ride') { const o = b.options.find((x) => x.id === b.choice); b.total = o.total; b.perPerson = o.perPerson; b.cars = o.cars; }
+    else { b.total = b.per * b.n; b.perPerson = b.per; }
+  }
+  // Anyone can switch the car type or the time before everyone approves; a change clears earlier approvals.
+  bookingOption(key, id, option) {
+    const p = this.player(key); const b = this.bookings.find((x) => x.id === id);
+    if (!p || p.isAI || !b || b.status !== 'pending') return;
+    if (b.kind === 'ride' && b.options.some((o) => o.id === option)) b.choice = option;
+    else if (b.kind === 'table' && b.slots.includes(option)) b.slot = option;
+    else return;
+    const had = Object.keys(b.votes).length > 0;
+    b.votes = {};
+    this.price(b);
+    this.log(p.pcode, 'booking_option', { id, option, total: b.total, approvals_reset: had });
     this.broadcast();
   }
   bookingVote(key, id, value) {
@@ -426,10 +470,28 @@ export class Table {
     }
     if (this.active().every((h) => b.votes[h.pcode])) {
       b.status = 'booked'; b.code = `DEMO-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
-      this.aiSay(`Booked (demo, nothing was charged): ${b.title}. Confirmation ${b.code}. I sent each person a payment request for $${b.perPerson.toFixed(2)}.`, 'booking_done', { id, code: b.code }, true);
+      if (b.kind === 'ride') {
+        // The ride plays out on the map so the group can see it: a driver is found, drives to the pickup, then to the place.
+        const now = Date.now(), k = Math.max(SCALE, 0.05);
+        b.driver = driver(b.choice); b.driverFrom = driverStart(b.origin);
+        b.phases = { matchedAt: now + 3000 * k, pickupAt: now + 18000 * k, dropoffAt: now + 48000 * k };
+        this.aiSay(`Booked (demo, nothing was charged): ${b.cars > 1 ? `${b.cars} ${optionName2(b)} cars` : `a ${optionName2(b)} car`} to ${b.place.name}. I sent each person a payment request for $${b.perPerson.toFixed(2)}. Watch the map to see how the ride would go.`, 'booking_done', { id, code: b.code, option: b.choice }, true);
+      } else {
+        this.aiSay(`Reserved (demo, nothing was charged): ${b.title}, ${b.slot}. Confirmation ${b.code}. I sent each person a payment request for $${b.perPerson.toFixed(2)}.`, 'booking_done', { id, code: b.code, slot: b.slot }, true);
+      }
       return;
     }
     this.broadcast();
+  }
+
+  bookingView(b, me) {
+    // The AI cannot see private cards, but it respects spending limits people chose to share.
+    const over = this.players.filter((x) => x.limitSharedAt !== null && this.limitOf(x).maxPerPerson && b.perPerson > this.limitOf(x).maxPerPerson)
+      .map((x) => `${x.name} ($${this.limitOf(x).maxPerPerson})`);
+    const { votes, by, ...rest } = b;
+    return { ...rest, warn: over.length ? `${list(over)} shared a spending limit, and this is above it.` : null,
+      mine: me ? (votes[me.pcode] ?? null) : null,
+      approved: this.humans().filter((h) => votes[h.pcode]).map((h) => h.name), waiting: this.active().filter((h) => votes[h.pcode] === undefined).map((h) => h.name) };
   }
 
   // ---------- the listening AI ----------
@@ -576,9 +638,8 @@ export class Table {
       plan: this.plan, complete: planComplete(this.task, this.plan), deal: this.deal, outcome: this.outcome,
       chat: this.chat.filter((m) => !m.to || m.to === key).slice(-80).map(({ to, ...m }) => m),
       aiPaused: this.aiPaused, pausedBy: this.pausedBy ? this.byCode(this.pausedBy)?.name : null,
-      bookings: this.bookings.map((b) => ({ id: b.id, kind: b.kind, title: b.title, details: b.details, total: b.total, perPerson: b.perPerson, n: b.n, status: b.status, code: b.code,
-        mine: me ? (b.votes[me.pcode] ?? null) : null,
-        approved: this.humans().filter((h) => b.votes[h.pcode]).map((h) => h.name), waiting: this.humans().filter((h) => b.votes[h.pcode] === undefined).map((h) => h.name) })),
+      bookings: this.bookings.map((b) => this.bookingView(b, me)),
+      maps: (this.maps || []).map((m) => ({ ...m, leader: this.choice(m.field) })),
       surveyUrl: this.room.surveyUrl || null, roomCode: this.room.code, kind: this.room.kind
     };
   }
