@@ -17,6 +17,7 @@ const RIDE_RE = /\b(uber|lyft|ride|rideshare|cab|taxi|car)\b/i;
 const FARE = { cove: 24, balboa: 16, oldtown: 18, torrey: 28, shores: 22, clubroom: 12, apartment: 14 };
 const PLACE = { cove: 'a cafe near La Jolla Cove', balboa: 'a cafe in Balboa Park', oldtown: 'a taco restaurant in Old Town', torrey: 'a cafe near Torrey Pines', shores: 'a grill near La Jolla Shores', clubroom: 'a pizza place near campus', apartment: 'a pizza place nearby' };
 const MEAL = { low: 13, mid: 24, high: 38, free: 10, under50: 10, over50: 18 };
+const AWAY_SECONDS = 45; // a closed page counts as away after this long
 const MAX_INTERJECTIONS = 2; // public, unprompted AI messages per chat stage
 const sec = (s) => s * SCALE * 1000;
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -26,26 +27,28 @@ const list = (names) => names.length <= 1 ? names.join('') : `${names.slice(0, -
 export const firstPerson = (s) => s.replace(/told you/g, 'told me').replace(/\b[Yy]ou are\b/g, 'I am').replace(/\bYou\b/g, 'I').replace(/\byou\b/g, 'I').replace(/\bYour\b/g, 'My').replace(/\byour\b/g, 'my');
 
 export class Table {
-  constructor({ io, room, humans, onDone, mode, taskId, number }) {
+  // forming: a class table that seats people one at a time as they join, and starts when it is full
+  // (or when the host starts it). Other tables are created with everyone already seated.
+  constructor({ io, room, humans, onDone, mode, taskId, number, forming, target }) {
     this.id = crypto.randomBytes(5).toString('hex');
     this.io = io; this.room = room; this.onDone = onDone;
     this.task = taskById(taskId || room.task);
     this.number = number || 1;
     this.mode = mode === 'ask' ? 'ask' : 'listen';
     this.t0 = Date.now();
-    const seats = Math.min(5, Math.max(3, humans.length));
-    const limits = shuffle(this.task.limits).slice(0, seats);
-    this.players = humans.map((h, i) => ({
-      key: h.key, name: h.name, userId: h.userId, isGuest: h.isGuest, isAI: false, pcode: `P0${i + 1}`, color: COLORS[i],
-      limitId: limits[i].id, limitSharedAt: null, limitMentionedAt: null, ready: false, confirmReady: false, msgs: 0, nudged: false
-    }));
-    for (let i = humans.length, n = 0; i < seats; i++, n++) {
-      this.players.push({ key: `ai${n + 1}`, name: `${AI_NAMES[n]} (AI)`, isAI: true, pcode: `A0${n + 1}`, color: '#52514e',
-        limitId: limits[i].id, limitSharedAt: null, limitMentionedAt: null, msgs: 0, revealed: false });
-    }
+    this.target = Math.min(5, Math.max(3, Number(target) || 4));
+    this.limitPool = shuffle(this.task.limits); // dealt in this order; a seat given up returns its limit
+    this.nextP = 1; this.nextAI = 0;
+    this.players = [];
+    this.forming = !!forming;
+    for (const h of humans) this.players.push(this.newHuman(h));
+    if (!this.forming) this.fillWithAI(Math.min(5, Math.max(3, humans.length)));
     this.prefs = {}; this.plan = {}; this.accepts = {};
     this.chat = []; this.seq = 0;
-    this.stage = 'lobby'; this.stageEndsAt = null;
+    this.stage = this.forming ? 'forming' : 'lobby'; this.stageEndsAt = null;
+    this.lastSeatChange = Date.now();
+    this.typingAt = new Map();
+    this.awaySince = new Map(); // player key -> when their last connection closed
     this.aiPaused = false;   // host runs the AI by hand (Wizard of Oz)
     this.pausedBy = null;    // a player paused the listening AI
     this.deal = null; this.outcome = null;
@@ -56,26 +59,84 @@ export class Table {
     this.lastBroadcast = 0;
   }
 
-  // A late arrival takes an AI player's seat, or an empty seat, while the table is still in Set up.
-  canSeat() { return this.stage === 'setup' && (this.players.some((p) => p.isAI) || this.players.length < 5); }
-  async addHuman(h) {
-    if (!this.canSeat() || this.player(h.key)) return false;
-    const n = this.humans().length + 1;
-    const pcode = `P0${n}`;
-    const ai = this.players.find((p) => p.isAI);
-    let limitId;
-    if (ai) { limitId = ai.limitId; this.players = this.players.filter((p) => p !== ai); }
-    else { const used = new Set(this.players.map((p) => p.limitId)); limitId = this.task.limits.find((l) => !used.has(l.id)).id; }
-    const p = { key: h.key, name: h.name, userId: h.userId, isGuest: h.isGuest, isAI: false, pcode, color: COLORS[(n - 1) % COLORS.length],
-      limitId, limitSharedAt: null, limitMentionedAt: null, ready: false, confirmReady: false, msgs: 0, nudged: false };
-    this.players.splice(this.humans().length, 0, p);
+  freeLimit() { const used = new Set(this.players.map((p) => p.limitId)); return this.limitPool.find((l) => !used.has(l.id)).id; }
+  uniqueName(name) {
+    const taken = new Set(this.players.map((p) => p.name.toLowerCase()));
+    if (!taken.has(name.toLowerCase())) return name;
+    for (let i = 2; ; i++) if (!taken.has(`${name} ${i}`.toLowerCase())) return `${name} ${i}`;
+  }
+  newHuman(h) {
+    const n = this.nextP++;
+    return { key: h.key, name: this.uniqueName(h.name), userId: h.userId, isGuest: h.isGuest, isAI: false, pcode: `P${String(n).padStart(2, '0')}`,
+      color: COLORS[(n - 1) % COLORS.length], limitId: this.freeLimit(), limitSharedAt: null, limitMentionedAt: null, ready: false, confirmReady: false, msgs: 0, nudged: false, seatedAt: Date.now() };
+  }
+  fillWithAI(seats) {
+    const added = [];
+    while (this.players.length < seats) {
+      const n = this.nextAI++;
+      const p = { key: `ai${n + 1}`, name: `${AI_NAMES[n % AI_NAMES.length]} (AI)`, isAI: true, pcode: `A0${n + 1}`, color: '#52514e',
+        limitId: this.freeLimit(), limitSharedAt: null, limitMentionedAt: null, msgs: 0, revealed: false };
+      this.players.push(p); added.push(p);
+    }
+    return added;
+  }
+  async insertPlayer(p) {
     try {
-      if (ai) await q('delete from session_players where session_id=$1 and pcode=$2', [this.id, ai.pcode]);
-      await q('insert into session_players (session_id, pcode, user_id, display_name, role_id, is_ai, is_guest) values ($1,$2,$3,$4,$5,$6,$7)', [this.id, pcode, h.userId || null, h.name, limitId, false, !!h.isGuest]);
-    } catch (e) { console.error('late seat insert failed', e.message); }
-    this.log('system', 'player_joined_late', { pcode, replaced_ai: ai ? ai.pcode : null, limit: limitId });
-    this.sys(`${h.name} joined the table.`, 'join_notice');
+      await q('insert into session_players (session_id, pcode, user_id, display_name, role_id, is_ai, is_guest) values ($1,$2,$3,$4,$5,$6,$7)',
+        [this.id, p.pcode, p.userId || null, p.name, p.limitId, p.isAI, !!p.isGuest]);
+    } catch (e) { console.error('player insert failed', e.message); }
+  }
+  async insertSession() {
+    try { await q('insert into sessions (id, room_code, kind, scenario) values ($1,$2,$3,$4)', [this.id, this.room.code, this.room.kind, `${this.task.id}:${this.mode}`]); }
+    catch (e) { console.error('session insert failed', e.message); }
+  }
+
+  // ---------- seating while a class table forms ----------
+  isOpen() { return this.stage === 'forming' && this.humans().length < this.target; }
+  // A late arrival may also take an AI player's seat at a table that started less than 30 seconds ago.
+  canSeat() { return this.stage === 'forming' ? !this.starting && this.humans().length < 5 : this.stage === 'setup' && Date.now() - this.stageStartedAt < 30000 && this.players.some((p) => p.isAI); }
+  async seat(h) {
+    if (!this.canSeat() || this.player(h.key)) return false;
+    let replaced = null;
+    if (this.stage === 'setup') { replaced = this.players.find((p) => p.isAI) || null; if (replaced) this.players = this.players.filter((p) => p !== replaced); }
+    const p = this.newHuman(h);
+    if (replaced) p.limitId = replaced.limitId;
+    this.players.splice(this.humans().length, 0, p);
+    this.lastSeatChange = Date.now();
+    if (replaced) { try { await q('delete from session_players where session_id=$1 and pcode=$2', [this.id, replaced.pcode]); } catch {} }
+    await this.insertPlayer(p);
+    this.log('system', 'player_seated', { pcode: p.pcode, limit: p.limitId, stage: this.stage, replaced_ai: replaced?.pcode || null, humans: this.humans().length });
+    if (this.stage === 'setup') this.sys(`${p.name} joined the table.`, 'join_notice');
+    this.broadcast();
     return true;
+  }
+  async unseat(key, reason) {
+    const p = this.player(key);
+    if (!p || p.isAI || this.stage !== 'forming') return false;
+    this.players = this.players.filter((x) => x !== p);
+    this.lastSeatChange = Date.now();
+    try { await q('delete from session_players where session_id=$1 and pcode=$2', [this.id, p.pcode]); } catch {}
+    this.log('system', 'player_left_before_start', { pcode: p.pcode, reason });
+    this.broadcast();
+    return true;
+  }
+  // Start a forming table: labeled AI players fill seats up to 3, then Set up begins
+  // (or Chat begins at once if everyone already pressed Ready while the table filled).
+  async begin(reason) {
+    if (this.stage !== 'forming' || this.starting || !this.humans().length) return false;
+    this.starting = true; this.forming = false;
+    const added = this.fillWithAI(Math.max(3, this.players.length));
+    for (const p of added) await this.insertPlayer(p);
+    this.log('system', 'session_started', { room: this.room.code, kind: this.room.kind, table: this.number, task: this.task.id, ai_mode: this.mode, reason,
+      seats: this.players.map((p) => ({ pcode: p.pcode, limit: p.limitId, ai: p.isAI })) });
+    this.tick = setInterval(() => this.onTick(), 1000);
+    this.enter('setup');
+    if (this.active().every((h) => h.ready)) { this.log('system', 'stage_ended_early', { stage: 'setup' }); this.enter('chat'); }
+    return true;
+  }
+  typing(key) {
+    const p = this.player(key); if (!p || !['chat', 'confirm', 'setup'].includes(this.stage)) return;
+    for (const o of this.humans()) if (o !== p) this.io.to(`k:${o.key}`).emit('game:typing', { sessionId: this.id, pcode: p.pcode, name: p.name });
   }
 
   get t() { return Date.now() - this.t0; }
@@ -96,20 +157,25 @@ export class Table {
     return out;
   }
   humans() { return this.players.filter((p) => !p.isAI); }
+  // People whose page has been closed for a while do not hold up Ready, Accept, or a booking for everyone else.
+  connected(p) { return !!this.io.sockets.adapter.rooms.get(`k:${p.key}`)?.size; }
+  isAway(p) { return !p.isAI && this.awaySince?.has(p.key) && Date.now() - this.awaySince.get(p.key) > sec(AWAY_SECONDS); }
+  active() { const a = this.humans().filter((p) => !this.isAway(p)); return a.length ? a : this.humans(); }
   player(key) { return this.players.find((p) => p.key === key); }
   byCode(pcode) { return this.players.find((p) => p.pcode === pcode); }
   limitOf(p) { return this.task.limits.find((l) => l.id === p.limitId); }
   listening() { return this.mode === 'listen' && !this.aiPaused && !this.pausedBy; }
   panel() { return buildPanel(this.task, this.prefs, this.players); }
 
+  // Forming tables: the session row exists from the first seat, so joins and leaves are logged.
+  async open() {
+    await this.insertSession();
+    this.log('system', 'table_opened', { room: this.room.code, table: this.number, task: this.task.id, ai_mode: this.mode, target: this.target });
+  }
+
   async start() {
-    try {
-      await q('insert into sessions (id, room_code, kind, scenario) values ($1,$2,$3,$4)', [this.id, this.room.code, this.room.kind, `${this.task.id}:${this.mode}`]);
-      for (const p of this.players) {
-        await q('insert into session_players (session_id, pcode, user_id, display_name, role_id, is_ai, is_guest) values ($1,$2,$3,$4,$5,$6,$7)',
-          [this.id, p.pcode, p.userId || null, p.name, p.limitId, p.isAI, !!p.isGuest]);
-      }
-    } catch (e) { console.error('session insert failed', e.message); }
+    await this.insertSession();
+    for (const p of this.players) await this.insertPlayer(p);
     this.log('system', 'session_started', { room: this.room.code, kind: this.room.kind, table: this.number, task: this.task.id, ai_mode: this.mode, seats: this.players.map((p) => ({ pcode: p.pcode, limit: p.limitId, ai: p.isAI })) });
     this.tick = setInterval(() => this.onTick(), 1000);
     this.enter('setup');
@@ -133,7 +199,7 @@ export class Table {
     if (stage === 'setup') {
       this.aiSay(this.mode === 'listen'
         ? 'Hi, I am the AI for this table. I read the chat, keep the Plan so far up to date, and ask a question now and then. I cannot see your private limits and I never vote. Anyone can pause me.'
-        : 'Hi, I am the AI for this table. I only answer when someone asks me, with @AI or the Ask button. I cannot see your private limits and I never vote.', 'ai_intro', null, true);
+        : 'Hi, I am the AI for this table. I only answer when someone asks me: start a message with @AI, or turn on the AI button next to the message box. I cannot see your private limits and I never vote.', 'ai_intro', null, true);
     }
     if (stage === 'chat') {
       this.sys(`Chat: 6 minutes. ${this.task.prompt} Decide: ${this.task.fields.map((f) => f.name.toLowerCase()).join(', ')}. Tap "Ready to confirm" when you think you agree.`, 'stage_intro', { stage });
@@ -198,16 +264,17 @@ export class Table {
 
   // ---------- player actions ----------
   ready(key) {
-    const p = this.player(key); if (!p || p.isAI || this.stage !== 'setup' || p.ready) return;
-    p.ready = true; this.log(p.pcode, 'ready_clicked');
-    if (this.humans().every((h) => h.ready)) { this.log('system', 'stage_ended_early', { stage: 'setup' }); this.enter('chat'); return; }
+    const p = this.player(key); if (!p || p.isAI || !['setup', 'forming'].includes(this.stage) || p.ready) return;
+    p.ready = true; this.log(p.pcode, 'ready_clicked', { stage: this.stage });
+    if (this.stage === 'forming') { this.broadcast(); return; }
+    if (this.active().every((h) => h.ready)) { this.log('system', 'stage_ended_early', { stage: 'setup' }); this.enter('chat'); return; }
     this.broadcast();
   }
 
   confirmReady(key) {
     const p = this.player(key); if (!p || p.isAI || this.stage !== 'chat' || p.confirmReady) return;
     p.confirmReady = true; this.log(p.pcode, 'ready_to_confirm');
-    if (this.humans().every((h) => h.confirmReady)) { this.log('system', 'stage_ended_early', { stage: 'chat' }); this.enter('confirm'); return; }
+    if (this.active().every((h) => h.confirmReady)) { this.log('system', 'stage_ended_early', { stage: 'chat' }); this.enter('confirm'); return; }
     this.broadcast();
   }
 
@@ -286,7 +353,7 @@ export class Table {
     if (!p || p.isAI || this.stage !== 'confirm' || this.deal) return;
     this.accepts[key] = !!value;
     this.log(p.pcode, 'vote', { value: !!value, plan: this.plan, limit_ok: planComplete(this.task, this.plan) ? !this.limitOf(p).violates(this.plan) : null });
-    if (this.humans().every((h) => this.accepts[h.key])) {
+    if (this.active().every((h) => this.accepts[h.key])) {
       if (planComplete(this.task, this.plan)) return this.lockDeal();
       this.sys(`Everyone accepted, but the plan is missing: ${this.task.fields.filter((f) => !this.plan[f.id]).map((f) => f.name).join(', ')}.`, 'incomplete_plan');
     }
@@ -357,7 +424,7 @@ export class Table {
       this.aiSay(`Not booked: ${p.name} said the price does not work. I will not book anything until everyone agrees. Want a cheaper option?`, 'booking_declined', { id }, true);
       return;
     }
-    if (this.humans().every((h) => b.votes[h.pcode])) {
+    if (this.active().every((h) => b.votes[h.pcode])) {
       b.status = 'booked'; b.code = `DEMO-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
       this.aiSay(`Booked (demo, nothing was charged): ${b.title}. Confirmation ${b.code}. I sent each person a payment request for $${b.perPerson.toFixed(2)}.`, 'booking_done', { id, code: b.code }, true);
       return;
@@ -437,7 +504,24 @@ export class Table {
     this.say(p.key, this.limitOf(p).say);
   }
 
+  // Track who has closed the page. When someone has been away long enough, re-check anything that was waiting on everyone.
+  checkPresence() {
+    let changed = false;
+    for (const p of this.humans()) {
+      if (this.connected(p)) { if (this.awaySince.delete(p.key) && p.wasAway) { p.wasAway = false; this.log(p.pcode, 'player_back'); changed = true; } continue; }
+      if (!this.awaySince.has(p.key)) this.awaySince.set(p.key, Date.now());
+      if (this.isAway(p) && !p.wasAway) { p.wasAway = true; this.log(p.pcode, 'player_away', { stage: this.stage }); changed = true; }
+    }
+    if (!changed) return;
+    const act = this.active();
+    if (this.stage === 'setup' && act.every((h) => h.ready)) return this.enter('chat');
+    if (this.stage === 'chat' && act.every((h) => h.confirmReady)) return this.enter('confirm');
+    if (this.stage === 'confirm' && !this.deal && act.every((h) => this.accepts[h.key]) && planComplete(this.task, this.plan)) return this.lockDeal();
+    this.broadcast();
+  }
+
   onTick() {
+    if (this.stage !== 'done') this.checkPresence();
     if (this.stage === 'chat' && this.mode === 'listen' && this.listening()) this.listen();
     // Every change already broadcasts; this slower refresh only keeps quiet-member lists and counts current.
     if ((this.stage === 'chat' || this.stage === 'confirm') && Date.now() - this.lastBroadcast > 5000) this.broadcast();
@@ -469,7 +553,8 @@ export class Table {
     const open = this.stage === 'wrap' || this.stage === 'done';
     const final = this.deal ? this.deal.plan : this.plan;
     return {
-      id: this.id, number: this.number, stage: this.stage, stageEndsAt: this.stageEndsAt, serverNow: Date.now(), mode: this.mode,
+      id: this.id, number: this.number, stage: this.stage, stageEndsAt: this.stageEndsAt, serverNow: Date.now(), mode: this.mode, target: this.target,
+      autoStart: this.room.autoStart !== false,
       durations: Object.fromEntries(Object.entries(DURATIONS).map(([k, v]) => [k, v * SCALE])),
       task: { id: this.task.id, title: this.task.title, short: this.task.short, prompt: this.task.prompt, fields: this.task.fields.map((f) => ({ id: f.id, name: f.name, options: f.options.map((x) => ({ id: x.id, name: x.name })) })) },
       me: me ? {
@@ -480,7 +565,7 @@ export class Table {
         const mine = p.key === key;
         return {
           pcode: p.pcode, name: p.name, isAI: p.isAI, isYou: mine, color: p.color, initial: p.isAI ? 'AI' : p.name.slice(0, 1).toUpperCase(),
-          ready: !!p.ready, confirmReady: !!p.confirmReady, accepted: !!this.accepts[p.key], msgs: p.msgs,
+          ready: !!p.ready, confirmReady: !!p.confirmReady, accepted: !!this.accepts[p.key], msgs: p.msgs, away: this.isAway(p),
           limitSharedAt: p.limitSharedAt, limitMentionedAt: mine || open ? p.limitMentionedAt : null,
           limit: mine || open || p.limitSharedAt !== null ? this.limitOf(p).text : null,
           limitOk: open && planComplete(this.task, final) ? !this.limitOf(p).violates(final) : null
@@ -501,7 +586,7 @@ export class Table {
   hostView() {
     return {
       id: this.id, number: this.number, stage: this.stage, stageEndsAt: this.stageEndsAt, serverNow: Date.now(), secondsLeft: this.secondsLeft(),
-      mode: this.mode, task: this.task.short, taskTitle: this.task.title, summary: this.summaryText(), plan: this.plan, deal: this.deal, outcome: this.outcome,
+      target: this.target, humans: this.humans().length, ready: this.humans().filter((h) => h.ready).length, mode: this.mode, task: this.task.short, taskTitle: this.task.title, summary: this.summaryText(), plan: this.plan, deal: this.deal, outcome: this.outcome,
       aiPaused: this.aiPaused, pausedBy: this.pausedBy, interjections: this.interjections,
       players: this.players.map((p) => ({ pcode: p.pcode, name: p.name, isAI: p.isAI, msgs: p.msgs, accepted: !!this.accepts[p.key], limitUp: p.limitSharedAt !== null || p.limitMentionedAt !== null })),
       chat: this.chat.slice(-12).map((m) => ({ ...m, to: m.to ? this.player(m.to)?.name : null })), pendingQuestions: this.pendingQuestions

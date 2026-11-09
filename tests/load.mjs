@@ -1,6 +1,7 @@
 // Load test: a host and a full class of simulated students play one class session at the same time.
-// Checks that tables form at the right size, every table gets a different scenario, both AI modes are used,
-// late arrivals are seated, every table finishes, and the data exports work.
+// Students arrive one by one over about 15 seconds and are seated the moment they join; full tables start by themselves.
+// Checks table sizes, a different scenario per table, both AI modes, people who leave while a table fills,
+// a late arrival, that every table finishes, and that the data exports work.
 // Run: node tests/load.mjs [students]   (default 75; uses TIME_SCALE 0.1, so a 10 minute session takes about 1 minute)
 import { spawn } from 'node:child_process';
 import { io } from 'socket.io-client';
@@ -46,7 +47,9 @@ function student(i) {
     s.on('game:state', (g) => {
       st.last = g; st.states++;
       const send = (ev, extra) => s.emit(ev, { sessionId: g.id, ...extra });
-      if (g.stage === 'setup' && !g.me.ready && !st.readyTimer) st.readyTimer = setTimeout(() => send('game:ready'), 2500 + Math.random() * 1500);
+      if (['setup', 'forming'].includes(g.stage) && !g.me.ready && !st.readyTimer) st.readyTimer = setTimeout(() => send('game:ready'), 2500 + Math.random() * 1500);
+      // student 5 closes the page as soon as the chat starts; their table must still be able to finish
+      if (i === 5 && g.stage === 'chat' && !st.dropped) { st.dropped = true; st.done = true; s.close(); return; }
       if (g.stage === 'chat' && !st.chatting) {
         st.chatting = true;
         const loop = async () => {
@@ -82,54 +85,65 @@ function student(i) {
     await new Promise((r) => s.on('connect', r));
     const r = await emit(s, 'room:join', { code: room.code });
     if (r.error) throw new Error(r.error);
+    st.seatedOnJoin = !!r.sessionId;
     return st;
   })();
 }
 
 const t0 = Date.now();
-const students = await Promise.all(Array.from({ length: N }, (_, i) => student(i + 1)));
-await sleep(500);
-check(`${N} students joined the waiting room`, roomState?.waiting.length === N, `(${roomState?.waiting.length})`);
-
-// event loop lag on the server is not visible here, so measure response time of the health route during play
 const lag = [];
 const probe = setInterval(async () => { const a = Date.now(); try { await fetch(`${BASE}/api/health`); lag.push(Date.now() - a); } catch {} }, 500);
 
-const startRes = await emit(host, 'room:start', { code: room.code });
-check('host starts tables', startRes.ok === true);
-await sleep(800);
-const first = [...hostTables.values()];
+// one person joins and closes the page before their table fills: their seat must be freed
+const leaver = await student(0);
+await sleep(200);
+const leaverTable = leaver.sessionId;
+leaver.s.close();
+await sleep(3000);
+
+// the class arrives over about 15 seconds
+const students = await Promise.all(Array.from({ length: N }, (_, i) => sleep(Math.random() * 15000).then(() => student(i + 1))));
+check(`all ${N} students were seated the moment they joined`, students.every((s) => s.seatedOnJoin && s.sessionId), `(${students.filter((s) => s.seatedOnJoin).length})`);
+await sleep(1500);
+const lt = hostTables.get(leaverTable);
+check('a person who closes the page while their table fills gives up the seat', !lt || !lt.players.some((p) => p.name === 'Student00'));
+
+// the host starts whatever is still filling
+const startRes = await emit(host, 'host:start-all', { code: room.code });
+check('host starts the remaining tables', startRes.ok === true, JSON.stringify(startRes));
+await sleep(1000);
+const ids = new Set(roomState.tables.map((t) => t.id));
+const first = [...hostTables.values()].filter((t) => ids.has(t.id));
 const sizes = first.map((t) => t.players.filter((p) => !p.isAI).length);
 check('every table has 3 to 5 people', sizes.every((n) => n >= 3 && n <= 5), `(sizes ${sizes.sort().join(',')})`);
+check('most tables have the chosen size of 4', sizes.filter((n) => n === 4).length >= sizes.length - 3);
 check('every student was seated once', sizes.reduce((a, b) => a + b, 0) === N);
 const tasks = first.map((t) => t.task);
 check('every table has a different scenario', new Set(tasks).size === tasks.length, `(${tasks.length} tables, ${new Set(tasks).size} scenarios)`);
 const modes = first.map((t) => t.mode);
 check('both AI modes are used about equally', Math.abs(modes.filter((m) => m === 'listen').length - modes.filter((m) => m === 'ask').length) <= 1, `(${modes.filter((m) => m === 'listen').length} listening, ${modes.filter((m) => m === 'ask').length} answer-only)`);
+check('no table is left filling', first.every((t) => t.stage !== 'forming'));
 
-// ---------- two late arrivals during Set up join existing tables; one much later gets its own table ----------
-const late = await Promise.all([student(N + 1), student(N + 2)]);
-await sleep(300);
-const lateRes = await emit(host, 'room:start', { code: room.code });
+// a late arrival after every table started gets a new table, which the host starts with AI players
+await sleep(4000);
+const latest = await student(N + 1);
+await sleep(500);
+const lateTable = hostTables.get(latest.sessionId);
+check('a late arrival is seated at once', !!latest.sessionId && !first.some((t) => t.id === latest.sessionId && t.players.every((p) => !p.isAI)));
+if (lateTable?.stage === 'forming') await emit(host, 'host:start-table', { code: room.code, sessionId: latest.sessionId });
 await sleep(800);
-check('two late arrivals join tables still in Set up', lateRes.seated === true && late.every((s) => s.sessionId && first.some((t) => t.id === s.sessionId)), JSON.stringify(lateRes));
-await sleep(6000);
-const latest = await student(N + 3);
-await sleep(300);
-await emit(host, 'room:start', { code: room.code });
-await sleep(800);
-const extra = [...hostTables.values()].find((t) => !first.some((f) => f.id === t.id));
-check('a later arrival gets a new table with AI players filling seats', !!extra && extra.players.length === 3 && extra.players.filter((p) => p.isAI).length === 2, extra ? `(table ${extra.number}, ${extra.task})` : '');
-students.push(...late, latest);
+const extra = hostTables.get(latest.sessionId);
+check('the late arrival plays with AI players in the empty seats', !!extra && extra.stage !== 'forming' && extra.players.filter((p) => p.isAI).length >= 1, extra ? `(table ${extra.number}, ${extra.players.length} seats)` : '');
+students.push(latest);
 
 // ---------- wait for every table to finish ----------
 for (let k = 0; k < 240 && !students.every((s) => s.done); k++) await sleep(500);
 clearInterval(probe);
 const doneCount = students.filter((s) => s.done).length;
 check('every student reached the end', doneCount === students.length, `(${doneCount} of ${students.length})`);
-const all = [...hostTables.values()];
+const all = [...hostTables.values()].filter((t) => roomState.tables.some((x) => x.id === t.id));
 const deals = all.filter((t) => t.deal).length;
-check('tables locked plans', deals >= Math.ceil(all.length * 0.8), `(${deals} of ${all.length})`);
+check('every table locked a plan, including the one where someone closed the page', deals === all.length, `(${deals} of ${all.length})`);
 const p95 = lag.sort((a, b) => a - b)[Math.floor(lag.length * 0.95)] || 0;
 check('server stayed responsive during play', p95 < 250, `(health check p95 ${p95} ms, max ${lag[lag.length - 1]} ms)`);
 check('no server errors', !/unhandled|uncaught|failed/i.test(serverErrors), serverErrors ? serverErrors.slice(0, 200) : '');

@@ -11,6 +11,7 @@ import Game from './pages/Game.jsx';
 import Host from './pages/Host.jsx';
 import History from './pages/History.jsx';
 import About from './pages/About.jsx';
+import Join from './pages/Join.jsx';
 
 
 function App() {
@@ -24,7 +25,7 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/about" element={<About />} />
         <Route path="/" element={<Need><Home /></Need>} />
-        <Route path="/join/:code" element={<Need><Room /></Need>} />
+        <Route path="/join/:code" element={<Join />} />
         <Route path="/room/:code" element={<Need><Room /></Need>} />
         <Route path="/quick" element={<Need><Room quick /></Need>} />
         <Route path="/play/:id" element={<Need><Game /></Need>} />

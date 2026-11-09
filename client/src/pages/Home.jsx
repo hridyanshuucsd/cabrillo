@@ -50,17 +50,17 @@ export default function Home() {
       </div>
 
       <div className="card stack">
-        <h2>Play now</h2>
-        <p className="small muted">Join the next table with whoever is online. If nobody else joins within a minute, clearly labeled AI players fill the empty seats.</p>
-        <button className="btn block" onClick={() => nav('/quick')}>Find a table</button>
-      </div>
-
-      <div className="card stack">
         <h2>Join with a code</h2>
         <form className="row" onSubmit={(e) => { e.preventDefault(); if (code.trim()) nav(`/join/${code.trim().toUpperCase()}`); }}>
           <input type="text" className="grow" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="For example K7QPM" aria-label="Room code" maxLength={8} autoCapitalize="characters" />
           <button className="btn">Join</button>
         </form>
+      </div>
+
+      <div className="card stack">
+        <h2>Play now</h2>
+        <p className="small muted">Join the next table with whoever is online. If nobody else joins within a minute, clearly labeled AI players fill the empty seats.</p>
+        <button className="btn ghost block" onClick={() => nav('/quick')}>Find a table</button>
       </div>
 
       <div className="card stack">
@@ -72,7 +72,7 @@ export default function Home() {
 
       <div className="card stack">
         <div className="row between"><h2 style={{ margin: 0 }}>Host a class session</h2>{me.isGuest && <span className="chip">Account needed</span>}</div>
-        <p className="small muted">Everyone joins one code. When you press Start, the app splits them into tables of 3 to 5, each with its own scenario. You can watch every table and speak for the AI.</p>
+        <p className="small muted">Everyone opens one link or scans a QR code. Each person is seated at a table the moment they join, each table gets its own scenario, and a table starts when it is full. You can watch every table and speak for the AI.</p>
         {showHost ? (
           <div className="stack">
             <label className="field">Scenario

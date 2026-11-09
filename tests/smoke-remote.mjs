@@ -21,12 +21,12 @@ for (let i = 1; i <= 4; i++) {
   s.on('game:state', (g) => { st.state = g; });
   await new Promise((res) => s.on('connect', res));
   const j = await emit(s, 'room:join', { code: room.code }); if (j.error) out('guest join', false, j.error);
+  st.seated = !!j.sessionId;
   kids.push(st);
 }
-out('4 guests joined over websockets', true);
-const sr = await emit(host, 'room:start', { code: room.code }); out('host started tables', sr.ok === true, JSON.stringify(sr));
+out('4 guests were seated the moment they joined', kids.every((k) => k.seated));
 await new Promise((res) => setTimeout(res, 3000));
-out('every guest is at a table in Set up', kids.every((k) => k.state?.stage === 'setup'), kids.map((k) => k.state?.stage).join(','));
+out('the full table started by itself (Set up)', kids.every((k) => k.state?.stage === 'setup'), kids.map((k) => k.state?.stage).join(','));
 const tb = [...tables.values()][0]; out('host sees the table', !!tb, tb ? `(Table ${tb.number}, ${tb.task}, ${tb.mode})` : '');
 for (const k of kids) k.s.emit('game:ready', { sessionId: k.state.id });
 await new Promise((res) => setTimeout(res, 2500));

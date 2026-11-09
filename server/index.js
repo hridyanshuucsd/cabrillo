@@ -122,6 +122,11 @@ io.on('connection', (socket) => {
 
   socket.on('room:join', safe(async ({ code }, cb) => ack(cb, await lobby.join(code, id, socket))));
   socket.on('room:leave', ({ code }) => lobby.leave(code, id.key));
+  socket.on('table:leave', safe(async ({ sessionId }, cb) => ack(cb, await lobby.leaveTable(String(sessionId), id.key))));
+  socket.on('host:start-table', safe(async ({ code, sessionId }, cb) => ack(cb, await lobby.startTable(code, String(sessionId), id.key))));
+  socket.on('host:start-all', safe(async ({ code }, cb) => ack(cb, await lobby.startAll(code, id.key))));
+  socket.on('host:auto-start', safe(async ({ code, value }, cb) => ack(cb, await lobby.setAutoStart(code, id.key, value))));
+  socket.on('game:typing', ({ sessionId }) => table(sessionId)?.typing(id.key));
   socket.on('room:start', safe(async ({ code }, cb) => ack(cb, await lobby.start(code, id.key))));
   socket.on('quick:join', safe(async (_, cb) => ack(cb, await lobby.join('QUICK', id, socket))));
 
@@ -154,7 +159,7 @@ io.on('connection', (socket) => {
   socket.on('host:pause', safe(async ({ code, sessionId, paused }) => (await hostTable(code, sessionId))?.hostPause(paused)));
   socket.on('host:say', safe(async ({ code, sessionId, text }) => (await hostTable(code, sessionId))?.hostSay(text)));
 
-  socket.on('disconnect', () => lobby.dropSocket(socket.id));
+  socket.on('disconnect', () => lobby.dropSocket(socket.id, id.key));
 });
 
 // ---------- web app ----------

@@ -7,6 +7,9 @@ const SCALE = Number(process.env.TIME_SCALE || 1);
 const FILL_AFTER = Number(process.env.FILL_AFTER_SECONDS || 60) * 1000; // Play now: AI fills empty seats after this wait
 const GATHER = Number(process.env.GATHER_SECONDS || 10) * 1000;       // Play now: wait for a 4th or 5th player
 const KEEP_TABLE = 30 * 60 * 1000;
+const SCALE_SWEEP = Math.min(1, Number(process.env.TIME_SCALE || 1)) || 1;
+const AWAY_LIMIT = 25 * 1000 * SCALE_SWEEP;  // a person who closes the page while their table fills loses the seat after this
+const IDLE_START = Number(process.env.IDLE_START_SECONDS || 60) * 1000 * SCALE_SWEEP; // a table of 3+ starts if nobody new joins for this long
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 // Split n waiting players into tables as close to the target size as possible, never fewer than 3 or more than 5.
@@ -28,13 +31,16 @@ export class Lobby {
     this.tables = new Map();  // table id -> Table
     this.playerTable = new Map(); // identity key -> table id
     this.rooms.set('QUICK', this.blankRoom('QUICK', 'quick', null, null));
+    this.lastSeen = new Map(); // identity key -> last time it had a live connection
     setInterval(() => this.checkQuick(), 1000);
+    setInterval(() => this.sweep(), 5000 * SCALE_SWEEP);
   }
 
   blankRoom(code, kind, ownerKey, surveyUrl, task, aiMode, groupSize) {
     // order: the scenario sequence for 'mixed' rooms, shuffled once so every table gets a different one.
+    // autoStart (class): a table starts by itself when it fills. The host can turn this off to hold tables until they press Start.
     return { code, kind, ownerKey, surveyUrl, task: task || DEFAULT_TASK, aiMode: aiMode || 'listen', groupSize: groupSize || 4, order: shuffle(ORDER),
-      tablesMade: 0, waiting: new Map(), tableIds: [], gatherTimer: null };
+      tablesMade: 0, waiting: new Map(), tableIds: [], gatherTimer: null, autoStart: true, joined: new Set() };
   }
 
   async createRoom(kind, owner, surveyUrl, task, aiMode, groupSize) {
@@ -68,8 +74,9 @@ export class Lobby {
     if (!room) return { error: 'No room with that code.' };
     socket.join(`room:${room.code}`);
     const active = this.activeTableFor(ident.key);
-    if (active) { socket.emit('game:start', { sessionId: active.id }); return { ok: true }; }
+    if (active) { socket.emit('game:start', { sessionId: active.id }); return { ok: true, sessionId: active.id }; }
     if (room.kind === 'class' && room.ownerKey === ident.key) { this.emitRoom(room); return { ok: true, host: true }; }
+    if (room.kind === 'class') return this.seatInClass(room, ident, socket);
     const w = room.waiting.get(ident.key) || { ...ident, sockets: new Set(), joinedAt: Date.now() };
     w.sockets.add(socket.id); w.name = ident.name;
     room.waiting.set(ident.key, w);
@@ -80,12 +87,138 @@ export class Lobby {
     return { ok: true };
   }
 
+  // ---------- class sessions: seat each person the moment they join ----------
+  roomTables(room) { return room.tableIds.map((id) => this.tables.get(id)).filter(Boolean); }
+
+  async makeTable(room, humans, forming) {
+    const n = room.tablesMade, S = room.order.length;
+    // 'mixed' gives each table the next scenario in the room's shuffled order, so no two tables share one until all are used.
+    const taskId = room.task === MIXED ? room.order[n % S] : room.task;
+    // "compare" alternates the listening AI and the answer-only AI across tables. When scenarios repeat, the repeat gets the other mode.
+    const flip = room.task === MIXED ? Math.floor(n / S) : 0;
+    const mode = room.aiMode === 'compare' ? ((n + flip) % 2 === 0 ? 'listen' : 'ask') : room.aiMode;
+    room.tablesMade++;
+    const table = new Table({ io: this.io, room, humans, mode, taskId, number: n + 1, forming, target: room.kind === 'class' ? room.groupSize : 5, onDone: (t) => this.onDone(t) });
+    this.tables.set(table.id, table);
+    room.tableIds.push(table.id);
+    return table;
+  }
+
+  async seatInClass(room, ident, socket) {
+    // Fill one table at a time: the open table with the most people, else a table that started under 30 seconds ago, else a new one.
+    const tables = this.roomTables(room);
+    let t = tables.filter((x) => x.isOpen()).sort((a, b) => b.humans().length - a.humans().length || a.number - b.number)[0];
+    if (!t) t = tables.filter((x) => x.stage === 'setup' && x.canSeat()).sort((a, b) => a.humans().length - b.humans().length)[0];
+    if (!t) { t = await this.makeTable(room, [], true); await t.open(); }
+    // two people can join in the same instant; recheck after the awaits above
+    if (!(await t.seat(ident))) {
+      if (this.activeTableFor(ident.key)) return { ok: true, sessionId: this.activeTableFor(ident.key).id };
+      t = await this.makeTable(room, [], true); await t.open(); await t.seat(ident);
+    }
+    this.playerTable.set(ident.key, t.id);
+    this.lastSeen.set(ident.key, Date.now());
+    room.joined.add(ident.key);
+    socket.emit('game:start', { sessionId: t.id });
+    if (t.stage === 'forming' && room.autoStart && t.humans().length >= t.target) {
+      await this.dropAway(t, 3000); // someone who already closed the page does not count toward a full table
+      if (t.humans().length >= t.target) await t.begin('full');
+    }
+    this.emitRoom(room);
+    return { ok: true, sessionId: t.id };
+  }
+
+  // Remove people from a filling table who have had no connection for longer than ms.
+  async dropAway(t, ms) {
+    const now = Date.now();
+    for (const p of [...t.humans()]) {
+      if (this.io.sockets.adapter.rooms.get(`k:${p.key}`)?.size) { this.lastSeen.set(p.key, now); continue; }
+      if (now - (this.lastSeen.get(p.key) || p.seatedAt) > ms) { await t.unseat(p.key, 'disconnected'); this.playerTable.delete(p.key); }
+    }
+  }
+
+  async leaveTable(sessionId, key) {
+    const t = this.tables.get(sessionId);
+    if (!t || !(await t.unseat(key, 'left'))) return { error: 'You can only leave before the table starts.' };
+    this.playerTable.delete(key);
+    await this.closeIfEmpty(t);
+    this.emitRoom(t.room);
+    return { ok: true };
+  }
+
+  async closeIfEmpty(t) {
+    if (t.stage !== 'forming' || t.humans().length) return;
+    this.tables.delete(t.id);
+    t.room.tableIds = t.room.tableIds.filter((x) => x !== t.id);
+    try { await q('delete from sessions where id=$1', [t.id]); } catch {}
+  }
+
+  async startTable(code, sessionId, byKey) {
+    const room = await this.getRoom(code);
+    if (!room || room.ownerKey !== byKey) return { error: 'Only the host can start tables.' };
+    const t = this.tables.get(sessionId);
+    if (!t || t.room !== room || !(await t.begin('host'))) return { error: 'That table has already started.' };
+    this.emitRoom(room);
+    return { ok: true };
+  }
+
+  // Start every table that is still filling. People at a table of 1 or 2 first move to another filling or just-started table
+  // with room (up to 5); anyone left plays with labeled AI players in the empty seats.
+  async startAll(code, byKey) {
+    const room = await this.getRoom(code);
+    if (!room || room.ownerKey !== byKey) return { error: 'Only the host can start tables.' };
+    const forming = () => this.roomTables(room).filter((t) => t.stage === 'forming' && t.humans().length);
+    for (const small of forming().filter((t) => t.humans().length < 3).sort((a, b) => a.humans().length - b.humans().length)) {
+      for (const p of [...small.humans()]) {
+        const dest = this.roomTables(room).filter((t) => t !== small && t.humans().length >= 3 && t.canSeat()).sort((a, b) => a.humans().length - b.humans().length)[0];
+        if (!dest) break;
+        await small.unseat(p.key, 'moved');
+        if (await dest.seat(p)) { this.playerTable.set(p.key, dest.id); this.io.to(`k:${p.key}`).emit('game:start', { sessionId: dest.id }); }
+      }
+      await this.closeIfEmpty(small);
+    }
+    let started = 0;
+    for (const t of forming()) { await this.dropAway(t, 5000); if (t.humans().length && await t.begin('host_all')) started++; else await this.closeIfEmpty(t); }
+    this.emitRoom(room);
+    return { ok: true, started };
+  }
+
+  async setAutoStart(code, byKey, value) {
+    const room = await this.getRoom(code);
+    if (!room || room.ownerKey !== byKey) return { error: 'Only the host can change this.' };
+    room.autoStart = !!value;
+    // turning it back on starts any table that is already full
+    if (room.autoStart) for (const t of this.roomTables(room)) if (t.stage === 'forming' && t.humans().length >= t.target) await t.begin('full');
+    for (const t of this.roomTables(room)) if (t.stage === 'forming') t.broadcast();
+    this.emitRoom(room);
+    return { ok: true };
+  }
+
+  // Every few seconds: people who closed the page while their table filled give up the seat,
+  // and a table of 3 or more that nobody new has joined for a minute starts (when auto start is on).
+  async sweep() {
+    const now = Date.now();
+    for (const room of this.rooms.values()) {
+      if (room.kind !== 'class') continue;
+      let changed = false;
+      for (const t of this.roomTables(room)) {
+        if (t.stage !== 'forming') continue;
+        const before = t.humans().length;
+        await this.dropAway(t, AWAY_LIMIT);
+        if (t.humans().length !== before) changed = true;
+        await this.closeIfEmpty(t);
+        if (room.autoStart && t.stage === 'forming' && t.humans().length >= 3 && now - t.lastSeatChange > IDLE_START) { await t.begin('idle'); changed = true; }
+      }
+      if (changed) this.emitRoom(room);
+    }
+  }
+
   leave(code, key) {
     const room = this.rooms.get(String(code || '').toUpperCase());
     if (room?.waiting.delete(key)) this.emitRoom(room);
   }
 
-  dropSocket(socketId) {
+  dropSocket(socketId, key) {
+    if (key) this.lastSeen.set(key, Date.now()); // last moment this person had a connection
     for (const room of this.rooms.values()) {
       for (const [key, w] of room.waiting) {
         if (w.sockets.delete(socketId) && w.sockets.size === 0) { room.waiting.delete(key); this.emitRoom(room); }
@@ -97,8 +230,8 @@ export class Lobby {
     return {
       code: room.code, kind: room.kind, ownerKey: room.ownerKey, surveyUrl: room.surveyUrl, task: room.task, aiMode: room.aiMode, groupSize: room.groupSize,
       waiting: [...room.waiting.values()].map((w) => ({ name: w.name })),
-      openSeats: room.tableIds.map((id) => this.tables.get(id)).filter((t) => t && t.canSeat()).length,
-      tables: room.tableIds.map((id) => this.tables.get(id)).filter(Boolean).map((t) => ({ id: t.id, number: t.number, task: t.task.short, stage: t.stage, size: t.players.length, mode: t.mode }))
+      autoStart: room.autoStart, joined: room.joined.size,
+      tables: room.tableIds.map((id) => this.tables.get(id)).filter(Boolean).map((t) => ({ id: t.id, number: t.number, task: t.task.short, stage: t.stage, size: t.players.length, humans: t.humans().length, target: t.target, mode: t.mode }))
     };
   }
   emitRoom(room) { this.io.to(`room:${room.code}`).emit('room:state', this.roomState(room)); }
@@ -115,7 +248,7 @@ export class Lobby {
         const t = room.tableIds.map((id) => this.tables.get(id)).filter((x) => x && x.canSeat()).sort((a, b) => a.humans().length - b.humans().length)[0];
         if (!t || !room.waiting.has(w.key)) continue;
         room.waiting.delete(w.key); // removed first, so a second press of Start cannot seat the same person twice
-        if (await t.addHuman(w)) {
+        if (await t.seat(w)) {
           this.playerTable.set(w.key, t.id);
           this.io.to(`k:${w.key}`).emit('game:start', { sessionId: t.id });
         } else room.waiting.set(w.key, w);
@@ -134,22 +267,20 @@ export class Lobby {
     for (const size of partition(people.length, room.kind === 'class' ? room.groupSize : 5)) {
       const group = people.slice(i, i + size); i += size;
       group.forEach((w) => room.waiting.delete(w.key));
-      const n = room.tablesMade, S = room.order.length;
-      // 'mixed' gives each table the next scenario in the room's shuffled order, so no two tables share one until all are used.
-      const taskId = room.task === MIXED ? room.order[n % S] : room.task;
-      // "compare" alternates the listening AI and the answer-only AI across tables, for class tests.
-      // When scenarios repeat (more tables than scenarios), the repeat gets the other AI mode.
-      const flip = room.task === MIXED ? Math.floor(n / S) : 0;
-      const mode = room.aiMode === 'compare' ? ((n + flip) % 2 === 0 ? 'listen' : 'ask') : room.aiMode;
-      room.tablesMade++;
-      const table = new Table({ io: this.io, room, humans: group, mode, taskId, number: n + 1, onDone: (t) => this.onDone(t) });
-      this.tables.set(table.id, table);
-      room.tableIds.push(table.id);
+      const table = this.makeTableSync(room, group);
       group.forEach((w) => { this.playerTable.set(w.key, table.id); this.io.to(`k:${w.key}`).emit('game:start', { sessionId: table.id }); });
       table.start();
     }
     clearTimeout(room.gatherTimer); room.gatherTimer = null;
     this.emitRoom(room);
+  }
+
+  makeTableSync(room, humans) {
+    const n = room.tablesMade; room.tablesMade++;
+    const table = new Table({ io: this.io, room, humans, mode: room.aiMode === 'compare' ? (n % 2 === 0 ? 'listen' : 'ask') : room.aiMode, taskId: room.task === MIXED ? room.order[n % room.order.length] : room.task, number: n + 1, onDone: (t) => this.onDone(t) });
+    this.tables.set(table.id, table);
+    room.tableIds.push(table.id);
+    return table;
   }
 
   // Play now: start as soon as 3 people wait (after a short gather window),
