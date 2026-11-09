@@ -65,6 +65,7 @@ function curve(a, b, n = 24) {
   });
 }
 const round5 = (x) => Math.round(x * 1e5) / 1e5;
+const thin = (pts) => { if (pts.length <= 160) return pts; const step = Math.ceil(pts.length / 160); return pts.filter((_, i) => i % step === 0 || i === pts.length - 1); };
 
 // Road route from the public OSRM service (OpenStreetMap data). Cached; falls back to an estimate within 2.5 seconds.
 const routeCache = new Map();
@@ -72,7 +73,16 @@ export async function route(a, b) {
   const key = `${a.lat},${a.lng};${b.lat},${b.lng}`;
   if (routeCache.has(key)) return routeCache.get(key);
   let out = null;
-  if (process.env.ROUTING !== 'off') {
+  // Mapbox Directions when a token is set (more reliable), else the public OSRM server.
+  if (process.env.MAPBOX_TOKEN && process.env.ROUTING !== 'off') {
+    try {
+      const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${a.lng},${a.lat};${b.lng},${b.lat}?geometries=geojson&overview=simplified&access_token=${process.env.MAPBOX_TOKEN}`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(2500) });
+      const rt = r.ok ? (await r.json()).routes?.[0] : null;
+      if (rt) out = { points: thin(rt.geometry.coordinates.map(([lng, lat]) => [round5(lat), round5(lng)])), miles: round1(rt.distance / 1609.34), minutes: Math.max(3, Math.round(rt.duration / 60)), source: 'mapbox' };
+    } catch { /* fall back below */ }
+  }
+  if (!out && process.env.ROUTING !== 'off') {
     try {
       const url = `https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=simplified&geometries=geojson`;
       const r = await fetch(url, { signal: AbortSignal.timeout(2500), headers: { 'User-Agent': 'Cabrillo class project (UC San Diego)' } });
@@ -80,8 +90,7 @@ export async function route(a, b) {
         const j = await r.json();
         const rt = j.routes?.[0];
         if (rt) {
-          let pts = rt.geometry.coordinates.map(([lng, lat]) => [round5(lat), round5(lng)]);
-          if (pts.length > 160) { const step = Math.ceil(pts.length / 160); pts = pts.filter((_, i) => i % step === 0 || i === pts.length - 1); }
+          const pts = thin(rt.geometry.coordinates.map(([lng, lat]) => [round5(lat), round5(lng)]));
           out = { points: pts, miles: round1(rt.distance / 1609.34), minutes: Math.max(3, Math.round(rt.duration / 60)), source: 'osrm' };
         }
       }

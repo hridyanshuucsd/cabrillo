@@ -22,7 +22,7 @@ Team 19, COGS 123 (Social Computing), UC San Diego. Place names are real; every 
 | Confirm | 2 min | The AI drafts the plan from the chat. Anyone can change a choice; any change clears all accepts. The plan locks when everyone accepts a complete plan. |
 | Wrap up | 1 min | Every limit is shown, with when it came up and whether the plan respects it. Three quick feedback questions. |
 
-The listening AI is rule based, so it works without any API key. An optional `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` lets a model answer @AI questions; otherwise answers are scripted.
+The listening AI is rule based, so it works without any API key. An optional `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` lets a model answer @AI questions (`AI_MODEL` picks the model); otherwise answers are scripted. An optional `MAPBOX_TOKEN` (a Mapbox public token) switches the in-chat maps to Mapbox and road routes to Mapbox Directions; without it, maps use Esri's free tiles and routes use the public OSRM server.
 
 ## Run it on your computer
 

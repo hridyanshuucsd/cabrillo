@@ -30,6 +30,8 @@ const lobby = new Lobby(io);
 
 authRoutes(app);
 app.get('/api/health', (req, res) => res.json({ ok: true, ai: aiMode() }));
+// Public settings for the browser. A Mapbox public token is meant to be visible; restrict it to this site's URL in Mapbox.
+app.get('/api/config', (req, res) => res.json({ mapboxToken: process.env.MAPBOX_TOKEN || null }));
 app.get('/api/tasks', (req, res) => res.json(Object.values(TASKS).map((t) => ({ id: t.id, title: t.title, short: t.short, prompt: t.prompt }))));
 
 const needUser = (req, res) => { const id = identityFromReq(req); if (!id) res.status(401).json({ error: 'Please sign in first.' }); return id; };

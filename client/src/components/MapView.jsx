@@ -8,6 +8,21 @@ const BASE = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_
 const LABELS = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}';
 const ATTRIB = 'Tiles &copy; Esri, HERE, Garmin, &copy; OpenStreetMap contributors';
 
+// With a Mapbox token (set MAPBOX_TOKEN on the server), maps use Mapbox's street style instead.
+let mapboxToken = null;
+const config = fetch('/api/config').then((r) => r.json()).then((c) => { mapboxToken = c.mapboxToken; }).catch(() => {});
+function addTiles(m) {
+  if (mapboxToken) {
+    L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}@2x?access_token=${mapboxToken}`, {
+      tileSize: 512, zoomOffset: -1, maxZoom: 19,
+      attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(m);
+  } else {
+    L.tileLayer(BASE, { attribution: ATTRIB, maxNativeZoom: 16, maxZoom: 19 }).addTo(m);
+    L.tileLayer(LABELS, { maxNativeZoom: 16, maxZoom: 19, pane: 'overlayPane' }).addTo(m);
+  }
+}
+
 const CAR_SVG = '<svg viewBox="0 0 24 24" width="22" height="22"><rect x="6" y="2.5" width="12" height="19" rx="4" fill="#10202b"/><rect x="8" y="6" width="8" height="4" rx="1.2" fill="#9fd3c9"/><rect x="8" y="15" width="8" height="3" rx="1" fill="#9fd3c9"/></svg>';
 
 function icon(p) {
@@ -33,8 +48,7 @@ export default function MapView({ points = [], route, car, height = 160, interac
       scrollWheelZoom: interactive, boxZoom: false, keyboard: interactive, tap: false, attributionControl: true, zoomSnap: 0.25
     });
     m.attributionControl.setPrefix(false);
-    L.tileLayer(BASE, { attribution: ATTRIB, maxNativeZoom: 16, maxZoom: 19 }).addTo(m);
-    L.tileLayer(LABELS, { maxNativeZoom: 16, maxZoom: 19, pane: 'overlayPane' }).addTo(m);
+    config.then(() => { if (map.current === m) addTiles(m); });
     map.current = m;
     layer.current = L.layerGroup().addTo(m);
     // The map is often created before its card has its final size; fit the pins and route again once it does.

@@ -20,3 +20,7 @@ services:
         sync: false   # comma-separated emails that may export all data
       - key: ANTHROPIC_API_KEY
         sync: false   # optional: enables live AI answers; without it the AI uses scripted answers
+      - key: OPENAI_API_KEY
+        sync: false   # optional: use OpenAI instead of Anthropic for @AI answers (AI_MODEL picks the model)
+      - key: MAPBOX_TOKEN
+        sync: false   # optional: a Mapbox public token (pk.) for Mapbox maps and road routes; without it, Esri maps and OSRM routes
