@@ -183,6 +183,7 @@ io.on('connection', (socket) => {
   socket.on('game:chat', ({ sessionId, text, limit }) => table(sessionId)?.say(id.key, text, { limit: !!limit }));
   socket.on('game:ask', ({ sessionId, text, private: priv }) => table(sessionId)?.ask(id.key, text, { private: !!priv }));
   socket.on('game:booking-answer', ({ sessionId, bookingId, ok }) => table(sessionId)?.bookingAnswer(id.key, String(bookingId), ok));
+  socket.on('game:bill-pay', ({ sessionId, billId, rowId, method }) => table(sessionId)?.payBill(id.key, String(billId), rowId, String(method)));
   socket.on('game:metoo', ({ sessionId, msgId }) => table(sessionId)?.metoo(id.key, msgId));
   socket.on('game:accept', ({ sessionId, value, fits }) => table(sessionId)?.accept(id.key, value, fits));
 

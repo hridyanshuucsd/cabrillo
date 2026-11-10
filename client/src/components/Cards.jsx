@@ -240,3 +240,59 @@ export function PlanCard({ g, m, onAccept }) {
     </div>
   );
 }
+
+// ---------- who owes what ----------
+// A table of who pays whom, and a button on your own row to pay through the AI. A demo: no money moves.
+const METHOD = { venmo: 'Venmo', zelle: 'Zelle', cash: 'Cash' };
+export function BillCard({ b, text, send, deal }) {
+  if (!b) return null;
+  const total = b.rows.reduce((a, r) => a + r.amount, 0);
+  const mine = b.rows.filter((r) => r.mine && !r.paid);
+  const getting = b.rows.filter((r) => r.toMe).reduce((a, r) => a + r.amount, 0);
+  const paidN = b.rows.filter((r) => r.paid).length;
+  const pay = (r, method) => send('game:bill-pay', { billId: b.id, rowId: r.id, method });
+  const open = b.status === 'open';
+  return (
+    <div className={`card-ai bill ${b.status === 'stale' ? 'stale' : ''}`} role="group" aria-label={b.title}>
+      <div className="card-ai-body">
+        {text && <div className="why">{text}</div>}
+        <div className="row between" style={{ alignItems: 'flex-start' }}>
+          <strong className="ride-title">{b.title}</strong>
+          <span className={`chip ${b.status === 'settled' ? 'ok' : b.status === 'stale' ? 'warn' : ''}`}>{b.status === 'settled' ? 'All paid (demo)' : b.status === 'stale' ? 'Out of date' : `${paidN} of ${b.rows.length} paid`}</span>
+        </div>
+        <div className="blk-scroll">
+          <table className="bill-table">
+            <thead><tr><th>Who</th><th>Pays</th><th>To</th><th className="num">Amount</th></tr></thead>
+            <tbody>
+              {b.rows.map((r) => (
+                <tr key={r.id} className={r.mine ? 'mine' : ''}>
+                  <td><strong>{r.mine ? 'You' : r.name}</strong>{r.note && <div className="tiny muted">{r.note}</div>}</td>
+                  <td>{r.paid ? <span className="paid">Paid · {METHOD[r.paid]}</span> : <span className="muted">Not yet</span>}</td>
+                  <td>{r.toMe ? 'You' : r.toName}</td>
+                  <td className="num"><strong>{money(r.amount)}</strong></td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot><tr><td colSpan={3}>Total</td><td className="num"><strong>{money(total)}</strong></td></tr></tfoot>
+          </table>
+        </div>
+        {b.notes?.map((n, i) => <div key={i} className="small muted">{n}</div>)}
+        {getting > 0 && <div className="okline">You get {money(getting)} back.</div>}
+        {b.hidden && open && <div className="private-box"><span className="only-you">Only you see this</span><span className="small">{b.hidden}</span></div>}
+        {open && !deal && mine.map((r) => (
+          <div key={r.id} className="private-box">
+            <span className="only-you">Only you see this</span>
+            <strong>Ready to pay {money(r.amount)} to {r.toName}?</strong>
+            <div className="row wrap-row" style={{ gap: 8 }}>
+              {(b.method ? [b.method] : ['venmo', 'zelle']).map((m) => (
+                <button key={m} className="btn small grow" onClick={() => pay(r, m)}>{m === 'cash' ? 'I paid in cash' : `Pay with ${METHOD[m]}`}</button>
+              ))}
+            </div>
+            <span className="tiny muted">The AI sends it for you. Demo: no money moves.</span>
+          </div>
+        ))}
+        {b.status === 'stale' && <div className="small muted">The plan changed after this bill. Ask "@AI who owes what" for a new one.</div>}
+      </div>
+    </div>
+  );
+}

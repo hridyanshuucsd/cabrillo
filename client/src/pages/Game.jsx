@@ -2,13 +2,23 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, emit, getSocket, msToClock, mmss, useCountdown, useSocketEvent } from '../lib.js';
 import TopBar from '../components/Brand.jsx';
-import { MapCard, RideCard, TableCard, PlanCard } from '../components/Cards.jsx';
+import { MapCard, RideCard, TableCard, PlanCard, BillCard } from '../components/Cards.jsx';
 
 // The flow is three steps: Briefing (your table fills while you read the task and your private limit),
 // Chat (no timer; the plan locks when everyone accepts it), and Results.
 const STATUS = { open: 'Open', split: 'Undecided', leaning: 'Leaning', agreed: 'Most agree' };
 // "Kai: Bus or trolley": who goes their own way for a part where people may differ (Getting there).
 const ownText = (own) => (own.length > 2 ? `${own.length} go their own way` : own.map((x) => `${x.name}: ${x.optionName}`).join(', '));
+// What a person knows about their own situation (fine to share), and what everyone knows about the scenario.
+function AboutYou({ g }) {
+  if (!g.me.facts?.length) return null;
+  return (
+    <div className="about-you">
+      {g.me.facts.map((f, i) => <div key={i} className="fact"><span className="fact-k">{f.label}</span><span>{f.text}{f.private && <span className="fact-note"> Part of your private limit.</span>}</span></div>)}
+    </div>
+  );
+}
+const GoodToKnow = ({ g }) => (g.task.info?.length ? <ul className="good-to-know">{g.task.info.map((t, i) => <li key={i}>{t}</li>)}</ul> : null);
 const OwnLine = ({ own }) => (own?.length ? <span className="own-line">{own.map((x) => `${x.name}: ${x.optionName}`).join(' · ')}</span> : null);
 
 // ---------- phone viewport ----------
@@ -154,6 +164,7 @@ function Briefing({ g, send, left }) {
         </section>
         <section className="card stack" style={{ gap: 6 }}>
           <span className="label">Your task</span><span>{g.task.prompt}</span>
+          {g.me.facts?.length > 0 && <><span className="label" style={{ marginTop: 6 }}>About you</span><AboutYou g={g} /></>}
           <span className="label limit-label" style={{ marginTop: 6 }}>Your private limit</span><strong>{l.text}</strong>
         </section>
         {forming && <button className="linkbtn center" onClick={async () => { await emit('table:leave', { sessionId: g.id }); nav('/'); }}>Leave this table</button>}
@@ -170,13 +181,19 @@ function Briefing({ g, send, left }) {
           <p style={{ margin: 0, fontSize: 16.5 }}>{g.task.prompt}</p>
           <span className="label">Together you decide</span>
           {g.task.fields.map((f) => <div key={f.id} className="decide"><strong>{f.name}</strong><span className="small muted">{f.options.map((o) => o.name).join(' · ')}</span></div>)}
+          {g.task.info?.length > 0 && <><span className="label">Good to know</span><GoodToKnow g={g} /></>}
         </section>
         <div className="sticky-foot"><button className="btn block" onClick={() => setStep(1)}>Next: your private limit</button></div>
       </>}
 
       {step === 1 && <>
-        {head('Your private limit', 2)}
+        {head('You in this scenario', 2)}
         {dots}
+        {g.me.facts?.length > 0 && <section className="card stack" style={{ gap: 8 }}>
+          <div className="row between"><span className="label">About you</span><span className="chip">Fine to share</span></div>
+          <AboutYou g={g} />
+          <p className="small muted" style={{ margin: 0 }}>Use these when people ask. You can see them again under Task.</p>
+        </section>}
         <section className="limit-card">
           <div className="row between"><span className="label limit-label">{l.custom ? 'You wrote this one' : 'Yours for this chat'}</span><span className="chip">Only you can see this</span></div>
           <div className="limit-body">{l.text}</div>
@@ -390,6 +407,8 @@ function InfoSheet({ g, send, onClose, humans }) {
   return (
     <Sheet title={g.task.title} onClose={onClose}>
       <p style={{ margin: 0 }}>{g.task.prompt}</p>
+      {g.me.facts?.length > 0 && <><span className="label">About you</span><AboutYou g={g} /></>}
+      {g.task.info?.length > 0 && <><span className="label">Good to know</span><GoodToKnow g={g} /></>}
       <div className="small muted">{AI_HELP[g.mode]}</div>
       <span className="label">At this table</span>
       {g.players.map((p) => (
@@ -487,7 +506,7 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
     const el = box.current; if (!el) return;
     if (atBottom.current || last?.from === g.me.pcode) { el.scrollTop = el.scrollHeight; setNewBelow(0); seenId.current = last?.id || 0; }
     else setNewBelow(g.chat.filter((m) => m.id > seenId.current).length);
-  }, [last?.id, g.bookings, g.maps?.length, typers.length]);
+  }, [last?.id, g.bookings, g.bills, g.maps?.length, typers.length]);
   // keep the newest message in view when the keyboard opens and the list gets shorter
   useEffect(() => {
     const el = box.current; if (!el || !window.ResizeObserver) return;
@@ -504,6 +523,7 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
             const b = (g.bookings || []).find((x) => x.id === m.bookingId);
             return b?.kind === 'ride' ? <RideCard key={m.id} b={b} send={send} offset={g.clockOffset} /> : <TableCard key={m.id} b={b} send={send} />;
           }
+          if (m.kind === 'bill') return <BillCard key={m.id} b={(g.bills || []).find((x) => x.id === m.billId)} text={m.text} send={send} deal={!!g.deal} />;
           if (m.kind === 'map') return <MapCard key={m.id} m={(g.maps || []).find((x) => x.id === m.mapId)} />;
           if (m.kind === 'plan') return <PlanCard key={m.id} g={g} m={m} onAccept={onAccept} />;
           if (m.kind === 'system') return <div key={m.id} className={`m-system ${m.host ? 'host' : ''}`}>{m.text}</div>;

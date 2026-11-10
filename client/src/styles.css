@@ -494,3 +494,19 @@ table.tables tr.left-out th, table.tables tr.left-out td:not(.cell-btn) { opacit
   .analytics .card { break-inside: avoid; border-color: #ccc; }
   .transcript { max-height: none; overflow: visible; }
 }
+
+/* ---------- about you, good to know, and the bill ---------- */
+.about-you { display: flex; flex-direction: column; gap: 6px; }
+.fact { display: flex; flex-direction: column; gap: 1px; font-size: 14.5px; line-height: 1.4; }
+.fact-k { font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--ink2); }
+.fact-note { color: var(--blue); font-weight: 700; font-size: 12.5px; }
+.good-to-know { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; line-height: 1.4; }
+.bill-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.bill-table th { text-align: left; font-size: 11.5px; color: var(--ink2); text-transform: uppercase; letter-spacing: .04em; padding: 4px 6px; border-bottom: 1px solid var(--line2); }
+.bill-table td { padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.bill-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bill-table tr.mine td { background: var(--blue-tint); }
+.bill-table tfoot td { border-bottom: 0; font-weight: 700; }
+.bill-table .paid { color: var(--primary-dark); font-weight: 800; white-space: nowrap; }
+.card-ai.bill { border: 2px solid var(--primary); }
+.card-ai.bill.stale { border: 1.5px solid var(--line); opacity: .75; }

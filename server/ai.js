@@ -152,6 +152,11 @@ export function cleanBlocks(blocks, task) {
       if (items.length) out.push({ type: 'compare', title, items });
     } else if (b.type === 'pick' && task.fields.some((f) => f.id === b.field)) out.push({ type: 'pick', field: b.field });
     else if (b.type === 'map') out.push({ type: 'map' });
+    else if (b.type === 'pay') {
+      const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 10).map((r) => ({ who: str(r?.who, 40), to: str(r?.to, 40), for: str(r?.for, 60), amount: Math.round(Number(r?.amount) * 100) / 100 }))
+        .filter((r) => r.who && r.amount > 0 && r.amount < 100000);
+      if (rows.length) out.push({ type: 'pay', title: title || 'Who owes what', rows });
+    }
   }
   return out;
 }
@@ -183,7 +188,7 @@ Game information:
 ${info}
 Plan so far (from the chat and taps):
 ${ctx.summary}
-${ctx.facts ? `What the app knows about the options:\n${ctx.facts}\n` : ''}Recent chat, including earlier questions to the AI and its answers (people appear as codes such as P01; AI players, who fill empty seats, by first name; the AI as AI; newest last):
+${ctx.facts ? `What the app knows about the options:\n${ctx.facts}\n` : ''}${ctx.people ? `Basic facts about each person at the table (fine to use):\n${ctx.people}\n` : ''}Recent chat, including earlier questions to the AI and its answers (people appear as codes such as P01; AI players, who fill empty seats, by first name; the AI as AI; newest last):
 ${ctx.recent || '(nothing yet)'}`;
 }
 
@@ -208,7 +213,9 @@ Answer with one JSON object and nothing else:
 {"type": "table", "title": "...", "columns": ["...", ...], "rows": [["...", ...], ...]}   (up to 4 columns, 8 rows)
 {"type": "compare", "title": "...", "items": [{"name": "<option name exactly as given>", "pros": ["..."], "cons": ["..."]}]}   (2 to 4 items; up to 3 pros and 3 cons each, at most 10 words each)
 {"type": "pick", "field": "<part id>"}    (shows the options of one part of the plan as buttons to tap)
-{"type": "map"}                           (shows the place options on a map)`;
+{"type": "map"}                           (shows the place options on a map)
+{"type": "pay", "title": "...", "rows": [{"who": "<code or AI player name>", "amount": 25.5, "to": "<code, AI player name, or a payee such as the restaurant>", "for": "..."}]}   (who owes whom how much, as a card each person can pay from through the AI; use it when people ask who owes what, want to split a cost, or want to pay; amounts in dollars, worked out from the facts given)
+When people ask who owes what, use a pay block (not a table) so they can pay from it.`;
 const PRIVATE_NOTE = `
 This question was asked privately: only the person who asked sees your answer. Speak to them directly ("you"). You may help them think through their own situation, or how to raise something with the group.
 You do not know their private limit unless they typed it in this private exchange. If they mention "my limit" without saying what it is, do not assume what it is about (money, time, travel or anything else): give wording they can fill in, or ask them what it is.
@@ -296,6 +303,7 @@ ${parts}
 Settled: ${ctx.settled || 'nothing yet'}
 Still open: ${ctx.open || 'nothing; every part has a choice'}
 What you would pick: ${ctx.wants || 'nothing in particular, you are easygoing'}
+About you (true; say these when asked): ${ctx.about || 'nothing special'}
 Your private limit: "${ctx.limit}" ${ctx.shared ? 'You have already told the group.' : 'The group does not know it yet.'}${ctx.fits === false ? ' The plan so far breaks it.' : ''}
 Recent chat (newest last):
 ${ctx.recent || '(nobody has said anything yet)'}

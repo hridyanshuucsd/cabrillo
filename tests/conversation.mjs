@@ -188,7 +188,68 @@ async function clash(label) {
   t.hostAdvance();
 }
 
+// The beach house: everyone knows basic facts about themselves, and the AI posts who owes what and takes payments.
+async function beach(label, { mode, key }) {
+  process.env.OPENAI_API_KEY = key ? 'test-key' : ''; process.env.FAKE_MODEL = '';
+  const room = { code: `B${Date.now() % 100000}`, kind: 'quick', task: 'beachhouse', autoStart: true };
+  const t = new Table({ io, room, humans: [{ key: 'u1', name: 'Maya', userId: null, isGuest: true }], mode, taskId: 'beachhouse', number: 1 });
+  const [maya, ari, kai] = t.players;
+  maya.limitId = 'cash_risk'; ari.limitId = 'one_night'; kai.limitId = 'no_venmo';
+  await t.start(); t.ready('u1');
+  const ck = (name, ok, extra) => check(`${label}: ${name}`, ok, extra);
+  const v = t.viewFor('u1');
+  ck('the person gets basic facts about themselves and the scenario', v.me.facts.length >= 3 && v.task.info.length >= 1 && v.me.facts.some((f) => /found the house/.test(f.text)), JSON.stringify(v.me.facts));
+  await sleep(900);
+  const id = t.seq; t.say('u1', 'ari and kai, how many nights did you stay?');
+  await until(() => [ari, kai].every((x) => t.chat.some((m) => m.id > id && m.from === x.pcode && /night|friday|saturday/i.test(m.text))), 5000);
+  const ans = t.chat.filter((m) => m.id > id && t.byCode(m.from)?.isAI);
+  ck('both AI players answer from their facts', ans.some((m) => m.from === ari.pcode && /saturday|one night|1 night/i.test(m.text)) && ans.some((m) => m.from === kai.pcode && /both nights|friday/i.test(m.text)), JSON.stringify(ans.map((m) => `${m.name}: ${m.text}`)));
+  ck('a fact that gives a limit away counts as sharing it', ari.limitSharedAt !== null);
+  for (const [f, o] of [['split', 'nights'], ['app', 'zelle'], ['payer', 'one'], ['groceries', 'shared']]) t.pick('u1', f, o);
+  await until(() => planComplete(), 5000);
+  function planComplete() { return ['split', 'app', 'payer', 'groceries'].every((f) => t.plan[f]); }
+  if (mode === 'ask') t.say('u1', '@ai who owes what?');
+  await until(() => t.bills.length > 0, 5000);
+  const b = t.bills[0];
+  ck('the AI posts who owes what once the plan is set', !!b && b.rows.length === 2 && b.method === 'zelle', JSON.stringify(b?.rows));
+  const ariRow = b?.rows.find((r) => r.pcode === ari.pcode), kaiRow = b?.rows.find((r) => r.pcode === kai.pcode);
+  ck('split by nights: one night costs half of two nights', ariRow && kaiRow && Math.abs(kaiRow.amount - 40 - 2 * (ariRow.amount - 40)) < 0.02, JSON.stringify(b?.rows));
+  ck('Maya found the house, so the others pay her back', b?.rows.every((r) => r.to === maya.pcode));
+  await until(() => b.status === 'settled', 5000);
+  ck('AI players pay their share, and the AI says when everyone has paid', b.status === 'settled' && t.chat.some((m) => /Everyone has paid/.test(m.text)));
+  const view = t.viewFor('u1').bills[0];
+  ck('the bill view names people and marks payments', view.rows.every((r) => r.paid === 'zelle' && r.toMe && r.name && !/^A0/.test(r.name)));
+  if (process.env.SHOW) { console.log(`\n----- ${label}: the chat -----`); for (const m of t.chat) console.log(`${m.to ? '(private) ' : ''}${m.kind.padEnd(8)} ${String(m.name).padEnd(10)} ${m.text}`); console.log(''); }
+  t.hostAdvance();
+}
+// A person paying through the AI, and a bill the model writes for a scenario without a built-in bill.
+async function payByPerson(label) {
+  process.env.OPENAI_API_KEY = ''; process.env.FAKE_MODEL = '';
+  const room = { code: `P${Date.now() % 100000}`, kind: 'quick', task: 'beachhouse', autoStart: true };
+  const t = new Table({ io, room, humans: [{ key: 'u1', name: 'Maya', userId: null, isGuest: true }, { key: 'u2', name: 'Dev', userId: null, isGuest: true }], mode: 'listen', taskId: 'beachhouse', number: 1 });
+  const [maya, dev] = t.players;
+  maya.limitId = 'no_venmo'; dev.limitId = 'cash_risk';
+  await t.start(); t.ready('u1'); t.ready('u2');
+  const ck = (name, ok, extra) => check(`${label}: ${name}`, ok, extra);
+  for (const k of ['u1', 'u2']) for (const [f, o] of [['split', 'even'], ['app', 'venmo'], ['payer', 'each'], ['groceries', 'own']]) t.pick(k, f, o);
+  await until(() => t.bills.length > 0, 5000);
+  const b = t.bills[0];
+  ck('paying each the house owner: everyone owes the owner $600 split evenly', b && b.rows.length === 3 && b.rows.every((r) => r.to === 'host' && r.amount === 200), JSON.stringify(b?.rows));
+  const mine = b.rows.find((r) => r.pcode === dev.pcode);
+  t.payBill('u2', b.id, mine.id, 'zelle');
+  ck('a person pays through the AI with the method the plan says, and gets a private receipt', b.paid[mine.id]?.method === 'venmo' && t.chat.some((m) => m.to === 'u2' && /you paid \$200\.00 to the house owner with Venmo/.test(m.text)));
+  ck('others do not see that receipt', !t.viewFor('u1').chat.some((m) => /you paid/.test(m.text)));
+  t.pick('u1', 'groceries', 'shared'); t.pick('u2', 'groceries', 'shared');
+  await sleep(300);
+  ck('a change to the plan marks the bill out of date', b.status === 'stale');
+  t.hostAdvance();
+}
+
 try {
+  await beach('beach house, listening', { mode: 'listen' });
+  await beach('beach house, answer-only', { mode: 'ask' });
+  await beach('beach house, model', { mode: 'listen', key: true });
+  await payByPerson('paying');
   await twoPeople('two people, scripted', { key: false });
   await twoPeople('two people, model', { key: true });
   await quiet('quiet person');
