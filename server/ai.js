@@ -21,12 +21,16 @@ You help the group decide; you never decide for them, never take a side, and you
 You cannot see anyone's private limits unless they were shared in the chat. Never guess them.
 Refer to people by their codes exactly as written (for example P01).
 Use only the information below. If the answer is not there, say you do not have that information.
-Answer in at most 2 short sentences, plain language, no emojis, no em dashes, no contractions.`;
+Answer in at most 2 short sentences, plain language, no emojis, no em dashes, no contractions.
+Sound like a friendly, relaxed classmate who happens to be organized: warm and natural, not formal or robotic, and never a stiff list.`;
+
+const OPENAI_MODELS = ['gpt-6.1-terra', 'gpt-5.6-terra', 'gpt-5.4-mini', 'gpt-4o-mini'];
+let workingModel = null;
 
 // One call to whichever provider has a key. Returns { text, source } or null when no key is set.
 async function chat(system, user, maxTokens) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
+  const timer = setTimeout(() => controller.abort(), 12000);
   try {
     if (process.env.ANTHROPIC_API_KEY) {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -39,18 +43,31 @@ async function chat(system, user, maxTokens) {
       return { text: d.content?.map((c) => c.text || '').join('').trim(), source: 'anthropic' };
     }
     if (process.env.OPENAI_API_KEY) {
-      const model = process.env.AI_MODEL || 'gpt-4o-mini';
-      const call = (limitKey) => fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST', signal: controller.signal,
-        headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ model, [limitKey]: maxTokens, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] })
-      });
-      // Older models take max_tokens; newer ones only take max_completion_tokens.
-      let r = await call('max_tokens');
-      if (r.status === 400) r = await call('max_completion_tokens');
-      if (!r.ok) throw new Error(`OpenAI ${r.status}: ${(await r.text()).slice(0, 200)}`);
-      const d = await r.json();
-      return { text: d.choices?.[0]?.message?.content?.trim(), source: 'openai' };
+      // Newest "Terra" model first (the balanced tier: natural chat at a fraction of the flagship price). If OpenAI does not
+      // accept a model name for this key, the next one is tried and the one that works is remembered. AI_MODEL pins one.
+      const chain = process.env.AI_MODEL ? [process.env.AI_MODEL] : OPENAI_MODELS;
+      const start = Math.max(0, chain.indexOf(workingModel));
+      let lastErr = '';
+      for (const model of chain.slice(start)) {
+        const call = (limitKey, budget) => fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST', signal: controller.signal,
+          headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ model, [limitKey]: budget, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] })
+        });
+        // Older models take max_tokens; newer ones only take max_completion_tokens (which also covers any hidden reasoning, so it gets more room).
+        let r = await call('max_tokens', maxTokens);
+        if (r.status === 400) r = await call('max_completion_tokens', maxTokens * 6);
+        if (r.ok) {
+          const d = await r.json();
+          const text = d.choices?.[0]?.message?.content?.trim();
+          if (!text) { lastErr = `${model}: empty answer`; continue; }
+          workingModel = model;
+          return { text, source: `openai:${model}` };
+        }
+        lastErr = `${model}: ${r.status} ${(await r.text()).slice(0, 160)}`;
+        if (![400, 403, 404].includes(r.status)) break; // rate limit or outage: do not cycle through models
+      }
+      throw new Error(`OpenAI ${lastErr}`);
     }
     return null;
   } finally { clearTimeout(timer); }

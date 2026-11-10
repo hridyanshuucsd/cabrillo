@@ -30,7 +30,7 @@ Team 19, COGS 123 (Social Computing), UC San Diego. Place names are real; every 
 
 The app works without any API key: the listening is rule based and answers are scripted. Optional keys:
 
-- `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`: a model answers @AI questions and rewrites the "AI hears" line (`AI_MODEL` picks the model; the default for OpenAI is `gpt-4o-mini`). Chat messages are sent with player codes in place of names. Set `AI_SUMMARY=off` to keep the "AI hears" line rule based.
+- `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`: a model answers @AI questions and rewrites the "AI hears" line (with an OpenAI key the app uses the newest "Terra" model, the balanced tier, and falls back to `gpt-5.6-terra`, `gpt-5.4-mini`, then `gpt-4o-mini` if a name is not accepted for the key; `AI_MODEL` pins one model). Chat messages are sent with player codes in place of names. Set `AI_SUMMARY=off` to keep the "AI hears" line rule based.
 - `MAPBOX_TOKEN` (a Mapbox public token): in-chat maps use Mapbox tiles and Mapbox Directions. Without it, maps use Esri's free tiles and routes use the public OSRM server.
 
 ## Run it on your computer
