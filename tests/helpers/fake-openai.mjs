@@ -15,7 +15,11 @@ globalThis.fetch = async (url, opts) => {
     else if (/where|meet/i.test(ask)) content = { text: `la jolla cove? tide pools are fun (${n})`, picks: { where: 'cove' }, mentions_limit: false };
     else content = { text: `yeah that works for me (${n})`, picks: {}, mentions_limit: false };
     content = JSON.stringify(content);
+  } else if (sys.includes('asked you to compare')) {
+    content = JSON.stringify({ text: 'Both are close to campus; it depends on what P01 wants from the day.', items: [
+      { name: 'La Jolla Cove', pros: ['Sea lions and tide pools', 'Free'], cons: ['Parking is hard on weekends'] },
+      { name: 'Balboa Park', pros: ['Lots of shade and museums', 'Easy by bus'], cons: ['Museums cost extra'] }] });
   } else if (sys.includes('keep one line above the chat')) content = 'The group is leaning toward La Jolla Cove and Sunday afternoon; getting there and budget are open.';
-  else content = 'You can take the trolley there.';
+  else content = 'Bring water, sunscreen and a towel; P01 might want shoes for the tide pools.';
   return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
 };

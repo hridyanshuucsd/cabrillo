@@ -82,8 +82,9 @@ export function isQuestion(text) {
   const s = String(text).toLowerCase().trim();
   return s.includes('?') || /^(what|where|when|how|which|who|should|shall|any|thoughts|ideas|anyone|so what|ok what|okay what)\b/.test(s) || /\b(should we|thoughts\??$|any ideas|you guys think|y'all think)\b/.test(s);
 }
-export function topicOf(task, text) {
-  if (!isQuestion(text)) return null;
+export function topicOf(task, text) { return isQuestion(text) ? topicIn(task, text) : null; }
+// The part of the plan a message is about, question or not.
+export function topicIn(task, text) {
   const s = ` ${String(text).toLowerCase()} `;
   const ids = new Set(task.fields.map((f) => f.id));
   // A field named in the question by its own name wins (for example "what about quiet hours?").

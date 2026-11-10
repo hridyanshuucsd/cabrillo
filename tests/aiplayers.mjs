@@ -69,9 +69,18 @@ async function run(label, port, env, extraArgs = []) {
     check(`${label}: no template lines like "I would like X for when"`, !texts.some((t) => /I would like .* for \w+\./.test(t)));
     await a.screenshot({ path: `${DIR}/${label}_02_when.png` });
 
+    // @ai (any case) gives a pros and cons card with a Pick button per option
+    await say('@ai pros and cons of la jolla cove vs balboa park?');
+    const cmp = a.getByRole('group', { name: 'Where: pros and cons' }).last();
+    check(`${label}: "@ai pros and cons" gives a pros and cons card`, await wait(cmp, 25000));
+    check(`${label}: the card covers both options, each with pros and cons`, (await cmp.locator('.cmp-item').count()) === 2 && (await cmp.locator('.cmp.pro').count()) >= 2 && (await cmp.locator('.cmp.con').count()) >= 2);
+    await cmp.scrollIntoViewIfNeeded(); await a.screenshot({ path: `${DIR}/${label}_025_compare.png` });
+    await say('@AI what should we bring to the beach?');
+    check(`${label}: "@AI" with another question gets an answer`, await wait(a.locator('.bubble.ai').filter({ hasText: /bring|sunscreen|water|towel|information|know/i }).last(), 20000));
+
     // share my limit through the AI: options it rules out are marked in the options card
     await a.getByRole('button', { name: 'Your private limit' }).click();
-    await a.getByRole('button', { name: /^AI passes it on, with my name/ }).click();
+    await a.getByRole('dialog').getByRole('button', { name: /^AI passes it on, with my name/ }).click();
     await a.waitForTimeout(800);
     let marked = false;
     for (const fl of ['Where', 'When', 'Getting there', 'Budget per person']) {

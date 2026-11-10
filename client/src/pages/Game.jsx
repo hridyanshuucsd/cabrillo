@@ -483,6 +483,7 @@ function Messages({ g, send, typers, sayMyself, share, onAccept }) {
                   {(first || m.kind === 'private') && <div className="m-name">{m.kind === 'private' ? <span className="only-you">Only you see this</span> : m.passedOn ? 'AI · passing on a limit' : 'AI'}</div>}
                   {m.text}
                   {m.poll && <Options g={g} send={send} id={m.poll} compact />}
+                  {m.card === 'compare' && m.compare && <Compare c={m.compare} g={g} send={send} />}
                   {m.actions === 'limit' && unshared && <ShareOptions sayMyself={sayMyself} share={share} />}
                 </div>
               </div>
@@ -507,6 +508,28 @@ function Messages({ g, send, typers, sayMyself, share, onAccept }) {
   );
 }
 
+// "@AI pros and cons": each option with its pros and cons, and a button to pick it.
+function Compare({ c, g, send }) {
+  const field = g.task.fields.find((f) => f.id === c.field);
+  const mine = g.me.prefs[c.field];
+  return (
+    <div className="compare" role="group" aria-label={c.title}>
+      {c.items.map((x) => {
+        const opt = field?.options.find((o) => o.name.toLowerCase() === x.name.toLowerCase());
+        return (
+          <div key={x.name} className="cmp-item">
+            <div className="row between"><strong>{x.name}</strong>
+              {opt && !g.deal && <button className={`btn small ${mine === opt.id ? '' : 'ghost'}`} aria-pressed={mine === opt.id} onClick={() => send('game:pick', { field: c.field, option: mine === opt.id ? '' : opt.id })}>{mine === opt.id ? 'Picked' : 'Pick'}</button>}
+            </div>
+            {x.pros.map((t, i) => <div key={`p${i}`} className="cmp pro"><span aria-hidden="true">+</span><span className="sr-only">Pro: </span>{t}</div>)}
+            {x.cons.map((t, i) => <div key={`c${i}`} className="cmp con"><span aria-hidden="true">−</span><span className="sr-only">Con: </span>{t}</div>)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Composer({ g, send, draft }) {
   const [text, setText] = useState('');
   const [askAI, setAskAI] = useState(false);
@@ -526,7 +549,7 @@ function Composer({ g, send, draft }) {
       <div className="composer-row">
         <button type="button" className={`ai-toggle ${askAI ? 'on' : ''}`} aria-pressed={askAI} aria-label="Ask AI" onMouseDown={(e) => e.preventDefault()} onClick={() => { setAskAI(!askAI); input.current?.focus(); }}>AI</button>
         <input ref={input} type="text" value={text} maxLength={300} aria-label="Message" enterKeyHint="send" autoComplete="off" autoCorrect="on" disabled={!!g.deal}
-          placeholder={askAI ? 'Ask the AI a question' : 'Message your group'}
+          placeholder={askAI ? 'Ask the AI anything' : 'Message, or @AI to ask'}
           onChange={(e) => { setText(e.target.value); if (!e.target.value) setIsLimit(false); if (Date.now() - lastTyping.current > 2000) { lastTyping.current = Date.now(); send('game:typing'); } }} />
         <button className="send" aria-label="Send" disabled={!text.trim()} onMouseDown={(e) => e.preventDefault()}>
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 12l16-8-6 16-2.5-6.5L4 12z" fill="currentColor" /></svg>

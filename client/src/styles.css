@@ -352,3 +352,10 @@ html.app-locked, html.app-locked body { position: fixed; inset: 0; overflow: hid
 .plan-line { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .plan-line:last-of-type { border-bottom: 0; }
 .plan-line strong { text-align: right; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.compare { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.cmp-item { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; display: flex; flex-direction: column; gap: 4px; }
+.cmp { display: flex; gap: 8px; font-size: 14px; line-height: 1.35; }
+.cmp > span[aria-hidden] { flex: none; width: 16px; font-weight: 800; text-align: center; }
+.cmp.pro > span[aria-hidden] { color: var(--primary); }
+.cmp.con > span[aria-hidden] { color: var(--warn); }

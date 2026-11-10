@@ -20,17 +20,17 @@ const SYSTEM = `You are the AI in Cabrillo, a clearly labeled AI that listens to
 You help the group decide; you never decide for them, never take a side, and you cannot vote.
 You cannot see anyone's private limits unless they were shared in the chat. Never guess them.
 Refer to people by their codes exactly as written (for example P01).
-Use only the information below. If the answer is not there, say you do not have that information.
-Answer in at most 2 short sentences, plain language, no emojis, no em dashes, no contractions.
+Prices, times, schedules and everyone's limits in this game are invented: for those, use only the information below. You may use common knowledge about real places and general planning tips. If you do not know, say so.
+Answer in at most 3 short sentences, plain language, no emojis, no em dashes, no contractions. If asked which option is best, lay out the trade-off and leave the choice to the group.
 Sound like a friendly, relaxed classmate who happens to be organized: warm and natural, not formal or robotic, and never a stiff list.`;
 
 const OPENAI_MODELS = ['gpt-6.1-terra', 'gpt-5.6-terra', 'gpt-5.4-mini', 'gpt-4o-mini'];
 let workingModel = null;
 
 // One call to whichever provider has a key. Returns { text, source } or null when no key is set.
-async function chat(system, user, maxTokens) {
+async function chat(system, user, maxTokens, timeoutMs = 12000) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     if (process.env.ANTHROPIC_API_KEY) {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -143,4 +143,29 @@ ${ctx.instruction}`;
     if (!text || text.length > 200) return null;
     return { text, picks: j.picks && typeof j.picks === 'object' ? j.picks : {}, mentionsLimit: !!j.mentions_limit, source: r.source };
   } catch (e) { console.error('AI player line failed:', e.message); return null; }
+}
+
+// ---------- pros and cons ----------
+// "@AI pros and cons of the cove vs balboa?" gets a card: each option with a few pros and cons. The app passes the
+// facts it has (who wants each option, shared limits it breaks, drive time, game information); the model adds common
+// knowledge about real places. Never a verdict.
+const COMPARE_RE = /\b(pros?|cons?|compare|comparison|vs\.?|versus|difference|differences|better|best|which one|trade-?offs?|upsides?|downsides?|good and bad|worth it)\b/i;
+export const wantsCompare = (q) => COMPARE_RE.test(q);
+const COMPARE = `You are the AI in Cabrillo, a clearly labeled AI in a small student group chat that is making one plan. Someone asked you to compare options.
+You never take a side and never pick a winner; the group decides.
+People appear as codes such as P01 or A02; refer to them only by code.
+Prices, times and everyone's limits in this game are invented: use only the ones given. You may add common knowledge about real places (what they are like, crowds, parking, weather, what to bring).
+Answer with JSON only: {"text": "one short framing sentence, no verdict", "items": [{"name": "<option name exactly as given>", "pros": ["..."], "cons": ["..."]}]}.
+Use every option listed, in order. Give each 1 to 3 pros and 1 to 3 cons, each at most 10 words. No emojis, no em dashes, no contractions.`;
+export async function compareOptions(question, ctx) {
+  try {
+    const r = await chat(COMPARE, `${context(ctx)}\n\nOptions to compare (with what the app knows):\n${ctx.facts}\n\nQuestion: ${question}`, 450, 20000);
+    if (!r?.text) return null;
+    const m = r.text.match(/\{[\s\S]*\}/);
+    const j = JSON.parse(m ? m[0] : r.text);
+    const clean = (a) => (Array.isArray(a) ? a : []).map((x) => String(x).replace(/\u2014|\u2013/g, ', ').trim()).filter(Boolean).slice(0, 3);
+    const items = (Array.isArray(j.items) ? j.items : []).slice(0, 4).map((x) => ({ name: String(x.name || '').trim(), pros: clean(x.pros), cons: clean(x.cons) })).filter((x) => x.name && (x.pros.length || x.cons.length));
+    if (items.length < 1) return null;
+    return { text: String(j.text || '').trim(), items, source: r.source };
+  } catch (e) { console.error('AI compare failed:', e.message); return null; }
 }

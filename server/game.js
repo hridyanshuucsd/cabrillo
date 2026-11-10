@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import { taskById, fieldName, optionName, planComplete } from './tasks.js';
-import { applyMessage, buildPanel, findConflict, topicOf, isQuestion } from './listener.js';
+import { applyMessage, buildPanel, findConflict, topicOf, topicIn, isQuestion, detectOptions } from './listener.js';
 import { q, logEvent } from './db.js';
-import { answerQuestion, summarize, aiMode, playerLine } from './ai.js';
+import { answerQuestion, summarize, aiMode, playerLine, wantsCompare, compareOptions } from './ai.js';
 import { PICKUP, placeField, placeOf, placesOf, estimate, route, rideOptions, slotsFor, driver, driverStart } from './places.js';
 
 // The flow has three steps:
@@ -408,8 +408,48 @@ export class Table {
     if (BOOK_RE.test(text) && !this.aiPaused) return this.proposeBooking(RIDE_RE.test(text) ? 'ride' : 'table', p);
     if (MAP_RE.test(text) && !this.aiPaused && placesOf(this.task).length) { this.showMap(p, true); this.broadcast(); return; }
     if (this.aiPaused) { this.pendingQuestions.push({ pcode: p.pcode, name: p.name, text }); this.broadcast(); return; }
+    if (wantsCompare(text) && await this.compare(p, text)) return;
     const a = await answerQuestion(text, { task: this.task, summary: this.summaryText(), recent: this.recentChat(12) });
     this.aiSay(this.withNames(a.text), 'ai_answer', { source: a.source, question: text, to_player: p.pcode });
+  }
+  // "@AI pros and cons of ...": a card with each option's pros and cons. The options are the ones named in the question
+  // (or every option of the part of the plan it is about). The model writes the points; without a key, the app's own facts.
+  async compare(p, text) {
+    const found = detectOptions(this.task, text).filter((m) => !m.negative);
+    const byField = {};
+    for (const m of found) (byField[m.field] = byField[m.field] || new Set()).add(m.option);
+    let field = Object.keys(byField).sort((a, b) => byField[b].size - byField[a].size)[0] || null;
+    let ids = field && byField[field].size >= 2 ? [...byField[field]] : null;
+    if (!ids) {
+      field = topicIn(this.task, text) || field || this.panel().find((f) => f.status === 'split' || f.status === 'leaning')?.id || this.task.fields[0].id;
+      const row = this.panel().find((f) => f.id === field);
+      const all = this.task.fields.find((f) => f.id === field).options.map((o) => o.id);
+      ids = [...row.options.map((o) => o.option), ...all].filter((x, i, a) => a.indexOf(x) === i).slice(0, 4);
+    }
+    const f = this.task.fields.find((x) => x.id === field);
+    const facts = ids.map((id) => this.optionFacts(field, id));
+    const ctx = { task: this.task, summary: this.anonymize(this.summaryText()), recent: this.recentChat(12),
+      facts: facts.map((x) => `- ${x.name}: ${[...x.pros, ...x.cons.map((c) => `against: ${c}`)].join('; ') || 'nothing known yet'}`).map((l) => this.anonymize(l)).join('\n') };
+    let out = aiMode() === 'scripted' ? null : await compareOptions(text, ctx);
+    let source = out?.source || 'scripted';
+    if (out) out.items = out.items.map((x) => ({ ...x, name: x.name, pros: x.pros.map((t) => this.withNames(t)), cons: x.cons.map((t) => this.withNames(t)) }));
+    else out = { text: `Here is what I know about each option for ${f.name.toLowerCase()}. The group decides.`, items: facts.map((x) => ({ name: x.name, pros: x.pros.length ? x.pros : ['Nothing in its favor said yet'], cons: x.cons.length ? x.cons : ['No downsides raised yet'] })) };
+    if (this.stage !== 'chat') return true;
+    const lead = out.text ? this.withNames(out.text) : `Pros and cons for ${f.name.toLowerCase()}.`;
+    this.aiSay(lead, 'ai_compare', { source, question: text, to_player: p.pcode, field, options: ids }, true, null, { card: 'compare', compare: { field, title: `${f.name}: pros and cons`, items: out.items } });
+    return true;
+  }
+  // What the app itself knows about one option: who wants it, shared limits it breaks, drive time, game information.
+  optionFacts(field, id) {
+    const f = this.task.fields.find((x) => x.id === field), o = f.options.find((x) => x.id === id);
+    const pros = [], cons = [];
+    const row = this.panel().find((x) => x.id === field);
+    const who = row.options.find((x) => x.option === id)?.who || [];
+    if (who.length) pros.push(`${list(this.names(who))} ${who.length > 1 ? 'want' : 'wants'} it`);
+    const no = this.blockedView()[field]?.[id] || [];
+    if (no.length) cons.push(`Does not work for ${list(no)} (shared limit)`);
+    if (placeField(this.task) === field) { const pl = placeOf(this.task, id); if (pl) { const e = estimate(PICKUP, pl); (e.minutes <= 20 ? pros : cons).push(`About ${e.minutes} min drive from campus`); } }
+    return { name: o.name, pros: pros.slice(0, 3), cons: cons.slice(0, 3) };
   }
   recentChat(n) {
     return this.chat.filter((m) => !m.to && ['chat', 'question', 'limit', 'pick'].includes(m.kind)).slice(-n).map((m) => `${m.from}: ${this.anonymize(m.text)}`).join('\n');
