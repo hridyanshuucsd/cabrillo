@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { taskById, fieldName, optionName, planComplete } from './tasks.js';
 import { applyMessage, buildPanel, findConflict, topicOf, topicIn, isQuestion, detectOptions } from './listener.js';
 import { q, logEvent } from './db.js';
-import { answerQuestion, summarize, aiMode, playerLine, wantsCompare, compareOptions } from './ai.js';
+import { answerQuestion, summarize, aiMode, playerLine, wantsCompare } from './ai.js';
 import { PICKUP, placeField, placeOf, placesOf, estimate, route, rideOptions, slotsFor, driver, driverStart } from './places.js';
 
 // The flow has three steps:
@@ -15,8 +15,8 @@ export const DURATIONS = { setup: 90 };
 const CHAT_MAX = 40 * 60;   // seconds; a backstop so abandoned tables close. Not shown to players.
 const AI_NAMES = ['Ari', 'Kai', 'Noa', 'Remy'];
 const COLORS = ['#2a78d6', '#eb6834', '#8f5bd6', '#1baf7a', '#c2410c'];
-// Booking demo: the AI can prepare a ride or a table, ask everyone to approve the price, and split it.
-// Nothing is really booked or charged.
+// Booking demo: what to book is decided in the group chat; which ride or which time is answered privately by each
+// person, and the group sees only the result. Nothing is really booked or charged.
 const BOOK_RE = /\b(book|reserve|order|call|get|grab|schedule)\b.{0,30}\b(uber|lyft|ride|rideshare|cab|taxi|car|table|restaurant|reservation|spot|dinner|lunch)\b|\b(make|need|get) a reservation\b|\breserve a table\b/i;
 const RIDE_RE = /\b(uber|lyft|ride|rides|rideshare|cab|taxi|car|cars)\b/i;
 // "show us a map", "how far is it": the AI posts a map of the place options.
@@ -31,7 +31,6 @@ const pickOne = (xs) => xs[Math.floor(Math.random() * xs.length)];
 const rand = (a, b) => a + Math.random() * (b - a);
 const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const ASK_AI = /(^|\s)@ai\b/i;
-const optionName2 = (b) => b.options.find((o) => o.id === b.choice).name;
 const list = (names) => names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 const STOP = new Set(['need', 'have', 'that', 'this', 'with', 'from', 'will', 'want', 'cannot', 'only', 'must', 'more', 'than', 'most', 'least', 'they', 'them', 'there', 'because', 'about', 'would', 'could', 'should', 'just', 'really', 'very', 'before', 'after', 'until', 'every']);
 
@@ -75,6 +74,8 @@ export class Table {
     this.interjections = 0; this.lastInterjectAt = 0; this.didLimitsCheck = false;
     this.asked = new Set(); this.pendingQuestions = [];
     this.bookings = []; this.maps = []; this.auto = {}; this.preparing = {}; this.cardAt = {};
+    this.thinkingPublic = 0; this.thinkingFor = new Map(); // who is waiting for an answer from the AI (everyone, or one person)
+    this.endReason = null;
     this.hearing = null; this.hearTimer = null; this.hearAt = 0;
     this.lastBroadcast = 0;
   }
@@ -222,10 +223,11 @@ export class Table {
       this.later(DURATIONS.setup, () => this.enter('chat'));
     }
     if (stage === 'chat') {
+      this.chatStartedAt = Date.now();
       this.sys(`${this.task.prompt} Decide ${list(this.task.fields.map((f) => f.name.toLowerCase()))}. Say what you want in the chat, or tap a part of the plan above to pick. The plan locks when everyone accepts it. There is no timer.`, 'stage_intro', { stage });
       this.aiSay(this.mode === 'listen'
-        ? 'Hi, I am the AI for this table. I read the chat and keep the plan above up to date. Your private limit stays private unless you share it or ask me to pass it on. I never vote.'
-        : 'Hi, I am the AI for this table. I only answer when asked: start a message with @AI, or turn on the AI button next to the message box. I can also pass on your private limit if you ask me to. I never vote.', 'ai_intro', null, true);
+        ? 'Hi, I am the AI for this table. I read the chat and keep the plan above up to date. Ask me anything with @AI, in the group or privately with the AI button. Your private limit stays private unless you share it or ask me to pass it on. I never vote.'
+        : 'Hi, I am the AI for this table. I only answer when asked: start a message with @AI, or use the AI button next to the message box to ask in the group or privately. I can also pass on your private limit if you ask me to. I never vote.', 'ai_intro', null, true);
       this.scheduleAiPlayers();
     }
     this.broadcast();
@@ -238,8 +240,17 @@ export class Table {
     const surfaced = this.players.filter((p) => Math.min(p.limitSharedAt ?? Infinity, p.limitMentionedAt ?? Infinity) <= cut).length;
     const complete = planComplete(this.task, plan);
     const respected = complete ? this.players.filter((p) => this.limitOk(p, plan) === true).length : 0;
-    this.outcome = { deal: !!this.deal, surfaced, respected, complete, of: this.players.length, mode: this.mode, interjections: this.interjections, minutes: Math.round((Date.now() - (this.chatStartedAt || Date.now())) / 6000 / SCALE) / 10 };
-    this.log('system', 'session_outcome', { ...this.outcome, plan });
+    const chatMs = this.chatStartedAt ? (this.deal ? this.t0 + this.deal.t : Date.now()) - this.chatStartedAt : 0;
+    const ended = this.endReason || (this.deal ? 'plan' : 'unknown'); // plan | group | host | backstop
+    this.outcome = { deal: !!this.deal, surfaced, respected, complete, of: this.players.length, mode: this.mode, interjections: this.interjections, ended,
+      minutes: Math.round(chatMs / 6000 / SCALE) / 10, seconds: Math.round(chatMs / 1000 / SCALE) };
+    this.log('system', 'session_outcome', { ...this.outcome, plan, humans: this.humans().length, ai_players: this.players.length - this.humans().length });
+    // One row per seat for the analysis: what happened to this person's limit, and how much they took part.
+    for (const p of this.players) {
+      this.log(p.pcode, 'player_outcome', { ai: p.isAI, limit: this.limitId(p), shared: p.limitSharedAt !== null, shared_at: p.limitSharedAt, via: p.limitVia || null, anonymous: !!p.limitAnon,
+        mentioned_at: p.limitMentionedAt, limit_ok: complete ? this.limitOk(p, plan) : null, accepted: !!this.accepts[p.key], msgs: p.msgs, picks: p.picks, private_questions: p.privateAsks || 0,
+        alerts: p.alerts || 0, away: !p.isAI && this.isAway(p) });
+    }
     this.log('system', 'session_ended', { outcome: this.deal ? 'deal' : 'no_deal' });
     try {
       await q('update sessions set ended_at=now(), outcome=$2, final_plan=$3 where id=$1', [this.id, this.deal ? 'deal' : 'no_deal', JSON.stringify({ plan, ...this.outcome })]);
@@ -248,8 +259,23 @@ export class Table {
   }
 
   pushChat(msg) {
-    this.chat.push({ id: ++this.seq, t: this.t, ...msg });
-    if (this.chat.length > 300) this.chat.shift();
+    const m = { id: ++this.seq, t: this.t, ...msg };
+    this.chat.push(m);
+    if (this.chat.length > 400) this.chat.shift();
+    return m;
+  }
+  // A person who sends more than 8 messages in 10 seconds is asked to slow down (only they see the note).
+  tooFast(p) {
+    const now = Date.now();
+    p.sent = (p.sent || []).filter((x) => now - x < 10000);
+    if (p.sent.length < 8) { p.sent.push(now); return false; }
+    if (!p.warnedFast || now - p.warnedFast > 15000) {
+      p.warnedFast = now;
+      this.pushChat({ from: 'system', name: 'Cabrillo', kind: 'system', to: p.key, text: 'You are sending messages very fast. Wait a few seconds and try again.' });
+      this.log(p.pcode, 'slow_down_notice');
+      this.broadcast();
+    }
+    return true;
   }
   sys(text, type, payload) {
     if (this.stage === 'done') return;
@@ -315,13 +341,17 @@ export class Table {
     const p = this.player(key); text = String(text || '').trim().slice(0, 300);
     if (!p || !text || this.stage !== 'chat') return;
     if (ASK_AI.test(text)) return this.ask(key, text);
+    if (!p.isAI && this.tooFast(p)) return;
     p.msgs++; p.lastMsgAt = Date.now();
     // A message sent from the "Say it myself" draft counts as sharing the limit, even if the person reworded it.
     const own = !!opts?.limit && !p.isAI && p.limitSharedAt === null;
     if (own) { p.limitSharedAt = this.t; p.limitAnon = false; p.limitVia = 'self'; this.log(p.pcode, 'limit_shared', { limit: this.limitId(p), via: 'self', anonymous: false, text }); }
-    this.pushChat({ from: p.pcode, name: p.name, kind: own ? 'limit' : 'chat', text });
+    const msg = this.pushChat({ from: p.pcode, name: p.name, kind: own ? 'limit' : 'chat', text });
     this.log(p.pcode, 'chat_message', { text, length: text.length });
-    this.read(p, text);
+    const changes = this.read(p, text);
+    // Listening tables: the options this message asked for, so others can tap "Me too" instead of typing it again.
+    const sup = this.mode === 'listen' ? changes.filter((c) => c.kind === 'supports').map((c) => ({ field: c.field, option: c.option })) : [];
+    if (sup.length) msg.sup = sup;
     if (this.listening() && BOOK_RE.test(text)) this.proposeBooking(RIDE_RE.test(text) ? 'ride' : 'table', p);
     else if (this.listening() && MAP_RE.test(text)) this.showMap(p);
     else if (!p.isAI) this.answerGroupQuestion(p, text);
@@ -341,7 +371,7 @@ export class Table {
     const row = this.panel().find((f) => f.id === field);
     const name = fieldName(this.task, field).toLowerCase();
     const head = row.status === 'agreed' ? `Most of you picked ${optionName(this.task, field, row.leader)} for ${name}. Tap below if you want to change yours.`
-      : row.options.length ? `Here is where ${name} stands. Tap one to pick.` : `Nobody has picked ${name} yet. Tap one to start.`;
+      : row.options.length ? `Here is what people have picked for ${name} so far. Tap one to pick yours.` : `Nobody has picked ${name} yet. Here are the options; tap one to start.`;
     const notes = this.sharedNotes(field);
     this.aiSay(notes ? `${head} ${notes}` : head, 'pick_card', { field, asked_by: p.pcode }, false, null, { poll: field, card: 'pick' });
     if (placeField(this.task) === field && !this.maps.length) { this.auto.map = true; this.showMap(null); }
@@ -357,24 +387,29 @@ export class Table {
     }
     return out.join(' ');
   }
-  blockedView() {
+  // Options that a shared limit rules out, per part of the plan. codes: player codes instead of names (for the model).
+  blockedView(codes) {
     const out = {};
     for (const f of this.task.fields) for (const o of f.options) for (const x of this.players) {
       if (x.limitSharedAt === null || !this.limitOf(x).violates({ [f.id]: o.id })) continue;
-      ((out[f.id] = out[f.id] || {})[o.id] = out[f.id][o.id] || []).push(x.limitAnon ? 'Someone' : x.name);
+      ((out[f.id] = out[f.id] || {})[o.id] = out[f.id][o.id] || []).push(x.limitAnon ? (codes ? 'someone' : 'Someone') : codes ? x.pcode : x.name);
     }
     return out;
   }
 
-  // What the AI takes from a message. Limit mentions are logged in both modes for analysis; the AI never acts on them.
+  // Limit mentions are logged in both modes for analysis; the AI never acts on them.
+  noteMention(p, text) {
+    if (p.limitMentionedAt === null && this.limitOf(p).re.test(text)) { p.limitMentionedAt = this.t; this.log(p.pcode, 'limit_mentioned', { limit: this.limitId(p) }); }
+  }
+  // What the AI takes from a group message. Returns what changed. A question to the AI is never read as a wish.
   read(p, text) {
-    const lim = this.limitOf(p);
-    if (p.limitMentionedAt === null && lim.re.test(text)) { p.limitMentionedAt = this.t; this.log(p.pcode, 'limit_mentioned', { limit: this.limitId(p) }); }
-    if (this.mode === 'listen' && this.pausedBy) return; // paused: the AI does not read new messages
+    this.noteMention(p, text);
+    if (this.mode === 'listen' && this.pausedBy) return []; // paused: the AI does not read new messages
     // Listening tables: the chat updates the plan. Answer-only tables: only taps do (AI players count, since they cannot tap).
     const board = this.mode === 'listen' || p.isAI;
     const changes = applyMessage(this.task, board ? this.prefs : this.parsed, p.pcode, text);
     if (changes.length) this.log(board ? 'AI' : 'system', board ? 'panel_update' : 'chat_parsed', { from: p.pcode, changes: changes.map((c) => ({ field: c.field, option: c.option, kind: c.kind })) });
+    return board ? changes : [];
   }
 
   // Tap a part of the plan to pick an option (or an empty option to take your pick back).
@@ -388,44 +423,83 @@ export class Table {
     if ((mine[field] || '') === option) return; // already so; a double tap changes nothing
     if (option) mine[field] = option; else delete mine[field];
     p.picks++;
-    const text = option ? `${p.name} picked ${optionName(this.task, field, option)} for ${f.name.toLowerCase()}.` : `${p.name} removed their pick for ${f.name.toLowerCase()}.`;
-    // Several taps in a row on the same part show as one line.
+    // Several taps in a row by one person show as one line: "Maya picked Old Town, Sunday afternoon and Bus or trolley."
     const last = this.chat[this.chat.length - 1];
-    if (last && last.kind === 'pick' && last.from === p.pcode && last.field === field) this.chat.pop();
-    this.pushChat({ from: p.pcode, name: p.name, kind: 'pick', field, text });
+    let picks = {};
+    if (last && last.kind === 'pick' && last.from === p.pcode && last.picks) { picks = last.picks; this.chat.pop(); }
+    picks = { ...picks, [field]: option || null };
+    const names = Object.entries(picks).filter(([, v]) => v).map(([k, v]) => optionName(this.task, k, v));
+    const gone = Object.entries(picks).filter(([, v]) => !v).map(([k]) => fieldName(this.task, k).toLowerCase());
+    const text = Object.keys(picks).length === 1 && names.length ? `${p.name} picked ${names[0]} for ${f.name.toLowerCase()}.`
+      : `${p.name} ${[names.length ? `picked ${list(names)}` : '', gone.length ? `removed their pick for ${list(gone)}` : ''].filter(Boolean).join(' and ')}.`;
+    this.pushChat({ from: p.pcode, name: p.name, kind: 'pick', picks, text });
     this.log(p.pcode, 'pick', { field, option: option || null });
     this.afterChange();
   }
 
-  async ask(key, text) {
-    const p = this.player(key); text = String(text || '').replace(ASK_AI, ' ').trim().slice(0, 300);
-    if (!p || !text || this.stage !== 'chat') return;
-    p.msgs++;
-    this.pushChat({ from: p.pcode, name: p.name, kind: 'question', text });
-    this.log(p.pcode, 'question_asked', { text });
-    this.read(p, text);
+  // "Me too" under someone's message: take the options that message asked for, in one tap.
+  metoo(key, msgId) {
+    const p = this.player(key); const m = this.chat.find((x) => x.id === Number(msgId));
+    if (!p || p.isAI || !m?.sup?.length || m.from === p.pcode || this.stage !== 'chat' || this.deal) return;
+    const mine = this.prefs[p.pcode] || (this.prefs[p.pcode] = {});
+    const add = m.sup.filter((x) => mine[x.field] !== x.option);
+    if (!add.length) return;
+    for (const x of add) mine[x.field] = x.option;
+    p.picks++;
+    this.pushChat({ from: p.pcode, name: p.name, kind: 'pick', text: `${p.name} agreed with ${m.name}: ${list(add.map((x) => optionName(this.task, x.field, x.option)))}.` });
+    this.log(p.pcode, 'me_too', { message: m.id, with: m.from, picks: Object.fromEntries(add.map((x) => [x.field, x.option])) });
     this.afterChange();
-    if (BOOK_RE.test(text) && !this.aiPaused) return this.proposeBooking(RIDE_RE.test(text) ? 'ride' : 'table', p);
-    if (MAP_RE.test(text) && !this.aiPaused && placesOf(this.task).length) { this.showMap(p, true); this.broadcast(); return; }
-    if (this.aiPaused) { this.pendingQuestions.push({ pcode: p.pcode, name: p.name, text }); this.broadcast(); return; }
-    if (wantsCompare(text) && await this.compare(p, text)) return;
-    this.aiThinking = true; this.broadcast();
+  }
+
+  // A question to the AI: "@AI ..." in the group chat (everyone sees the question and the answer), or asked privately
+  // with the AI button (only the person who asked sees either). Works at both kinds of table.
+  async ask(key, text, opts) {
+    const p = this.player(key); text = String(text || '').replace(ASK_AI, ' ').trim().slice(0, 300);
+    if (!p || p.isAI || !text || this.stage !== 'chat') return;
+    if (this.tooFast(p)) return;
+    const priv = !!opts?.private;
+    const to = priv ? p.key : null;
+    if (priv) p.privateAsks = (p.privateAsks || 0) + 1; else { p.msgs++; p.lastMsgAt = Date.now(); }
+    this.pushChat({ from: p.pcode, name: p.name, kind: 'question', text, to, ...(priv ? { private: true } : {}) });
+    this.log(p.pcode, 'question_asked', { text, private: priv });
+    if (!priv) this.noteMention(p, text);
+    this.broadcast();
+    const reply = (t, type, payload, extra) => this.aiSay(t, type, { ...payload, question: text, to_player: p.pcode, private: priv }, true, to, { answer: true, ...(extra || {}) });
+    if (this.aiPaused) { // a teammate is running the AI by hand
+      if (priv) return reply('A person is running the AI at this table right now, so I cannot answer privately. Ask in the group chat instead.', 'ai_answer', { source: 'rule' });
+      this.pendingQuestions.push({ pcode: p.pcode, name: p.name, text }); this.broadcast(); return;
+    }
+    if (BOOK_RE.test(text)) {
+      if (priv) return reply(`Booking a ${RIDE_RE.test(text) ? 'ride' : 'table'} is for the whole group, so it starts in the group chat: ask there (for example "@AI book a ${RIDE_RE.test(text) ? 'ride' : 'table'}"). I will then ask each person privately which options work for them.`, 'ai_answer', { source: 'rule' });
+      return this.proposeBooking(RIDE_RE.test(text) ? 'ride' : 'table', p);
+    }
+    if (!priv && MAP_RE.test(text) && placesOf(this.task).length) { this.showMap(p, true); this.broadcast(); return; }
+    if (aiMode() === 'scripted' && wantsCompare(text)) return this.compare(p, text, reply);
+    this.setThinking(to, true);
     let a;
-    try { a = await answerQuestion(this.anonymize(text), { task: this.task, asker: p.pcode, summary: this.anonymize(this.summaryText()), recent: this.recentChat(16, true) }); }
-    finally { this.aiThinking = false; }
+    try {
+      a = await answerQuestion(this.anonymize(text), { task: this.task, asker: p.pcode, private: priv, summary: this.anonymize(this.summaryText()),
+        facts: this.anonymize(this.factsText()), recent: this.recentChat(16, { withAI: true, forKey: to }) });
+    } finally { this.setThinking(to, false); }
     if (this.stage !== 'chat') return;
     const fix = (t) => this.withNames(t);
     const blocks = (a.blocks || []).map((b) => b.type === 'compare' ? { ...b, items: b.items.map((x) => ({ ...x, pros: x.pros.map(fix), cons: x.cons.map(fix) })) }
       : b.type === 'table' ? { ...b, rows: b.rows.map((r) => r.map(fix)) } : b.items ? { ...b, items: b.items.map(fix) } : b);
     const pick = blocks.find((b) => b.type === 'pick');
-    const extra = { answer: true, blocks: blocks.filter((b) => !['pick', 'map'].includes(b.type)) };
+    const extra = { blocks: blocks.filter((b) => !['pick', 'map'].includes(b.type)) };
     if (pick) extra.poll = pick.field;
-    this.aiSay(fix(a.text), 'ai_answer', { source: a.source, question: text, to_player: p.pcode, blocks: blocks.map((b) => b.type) }, true, null, extra);
-    if (blocks.some((b) => b.type === 'map') && placesOf(this.task).length) { this.showMap(p, true); this.broadcast(); }
+    reply(fix(a.text), 'ai_answer', { source: a.source, blocks: blocks.map((b) => b.type) }, extra);
+    if (!priv && blocks.some((b) => b.type === 'map') && placesOf(this.task).length) { this.showMap(p, true); this.broadcast(); }
   }
-  // "@AI pros and cons of ...": a card with each option's pros and cons. The options are the ones named in the question
-  // (or every option of the part of the plan it is about). The model writes the points; without a key, the app's own facts.
-  async compare(p, text) {
+  // "The AI is working on an answer": shown to everyone for a group question, and only to the asker for a private one.
+  setThinking(to, on) {
+    if (to) { const n = (this.thinkingFor.get(to) || 0) + (on ? 1 : -1); if (n > 0) this.thinkingFor.set(to, n); else this.thinkingFor.delete(to); }
+    else this.thinkingPublic = Math.max(0, this.thinkingPublic + (on ? 1 : -1));
+    this.broadcast();
+  }
+  // Without an AI key, "@AI pros and cons of ..." still gets a card, built from what the app itself knows. The options
+  // are the ones named in the question, or every option of the part of the plan it is about.
+  compare(p, text, reply) {
     const found = detectOptions(this.task, text).filter((m) => !m.negative);
     const byField = {};
     for (const m of found) (byField[m.field] = byField[m.field] || new Set()).add(m.option);
@@ -435,37 +509,47 @@ export class Table {
       field = topicIn(this.task, text) || field || this.panel().find((f) => f.status === 'split' || f.status === 'leaning')?.id || this.task.fields[0].id;
       const row = this.panel().find((f) => f.id === field);
       const all = this.task.fields.find((f) => f.id === field).options.map((o) => o.id);
-      ids = [...row.options.map((o) => o.option), ...all].filter((x, i, a) => a.indexOf(x) === i).slice(0, 4);
+      ids = [...row.options.map((o) => o.option), ...all].filter((x, i, arr) => arr.indexOf(x) === i).slice(0, 4);
     }
     const f = this.task.fields.find((x) => x.id === field);
-    const facts = ids.map((id) => this.optionFacts(field, id));
-    const ctx = { task: this.task, summary: this.anonymize(this.summaryText()), recent: this.recentChat(12),
-      facts: facts.map((x) => `- ${x.name}: ${[...x.pros, ...x.cons.map((c) => `against: ${c}`)].join('; ') || 'nothing known yet'}`).map((l) => this.anonymize(l)).join('\n') };
-    let out = aiMode() === 'scripted' ? null : await compareOptions(text, ctx);
-    let source = out?.source || 'scripted';
-    if (out) out.items = out.items.map((x) => ({ ...x, name: x.name, pros: x.pros.map((t) => this.withNames(t)), cons: x.cons.map((t) => this.withNames(t)) }));
-    else out = { text: `Here is what I know about each option for ${f.name.toLowerCase()}. The group decides.`, items: facts.map((x) => ({ name: x.name, pros: x.pros.length ? x.pros : ['Nothing in its favor said yet'], cons: x.cons.length ? x.cons : ['No downsides raised yet'] })) };
-    if (this.stage !== 'chat') return true;
-    const lead = out.text ? this.withNames(out.text) : `Pros and cons for ${f.name.toLowerCase()}.`;
-    this.aiSay(lead, 'ai_compare', { source, question: text, to_player: p.pcode, field, options: ids }, true, null, { answer: true, card: 'compare', compare: { field, title: `${f.name}: pros and cons`, items: out.items } });
-    return true;
+    const items = ids.map((id) => this.optionFacts(field, id)).map((x) => ({ name: x.name, pros: x.pros.length ? x.pros : ['Nothing in its favor said yet'], cons: x.cons.length ? x.cons : ['No downsides raised yet'] }));
+    reply(`Here is what I know about each option for ${f.name.toLowerCase()}. The group decides.`, 'ai_compare', { source: 'scripted', field, options: ids },
+      { card: 'compare', compare: { field, title: `${f.name}: pros and cons`, items } });
   }
-  // What the app itself knows about one option: who wants it, shared limits it breaks, drive time, game information.
+  // What the app itself knows about one option: who wants it, shared limits it breaks, and the drive time.
   optionFacts(field, id) {
     const f = this.task.fields.find((x) => x.id === field), o = f.options.find((x) => x.id === id);
     const pros = [], cons = [];
-    const row = this.panel().find((x) => x.id === field);
-    const who = row.options.find((x) => x.option === id)?.who || [];
+    const who = this.panel().find((x) => x.id === field).options.find((x) => x.option === id)?.who || [];
     if (who.length) pros.push(`${list(this.names(who))} ${who.length > 1 ? 'want' : 'wants'} it`);
     const no = this.blockedView()[field]?.[id] || [];
     if (no.length) cons.push(`Does not work for ${list(no)} (shared limit)`);
     if (placeField(this.task) === field) { const pl = placeOf(this.task, id); if (pl) { const e = estimate(PICKUP, pl); (e.minutes <= 20 ? pros : cons).push(`About ${e.minutes} min drive from campus`); } }
     return { name: o.name, pros: pros.slice(0, 3), cons: cons.slice(0, 3) };
   }
-  // withAI: also the AI's answers to questions, so follow-ups ("what about the second one?") make sense.
-  recentChat(n, withAI) {
-    return this.chat.filter((m) => !m.to && (['chat', 'question', 'limit', 'pick'].includes(m.kind) || (withAI && m.kind === 'ai' && m.answer)))
-      .slice(-n).map((m) => `${m.from}: ${this.anonymize(m.text)}${m.kind === 'question' ? ' (asked the AI)' : ''}${m.blocks?.length ? ` [also showed: ${m.blocks.map((b) => b.title || b.type).join(', ')}]` : ''}`).join('\n');
+  // The same facts for every option, as text for the model: who wants what, which shared limits rule an option out,
+  // and drive times. Names are replaced by codes before this is sent.
+  factsText() {
+    const blocked = this.blockedView(true), pf = placeField(this.task), panel = this.panel();
+    return this.task.fields.map((f) => {
+      const row = panel.find((x) => x.id === f.id);
+      return `- ${f.name}: ${f.options.map((o) => {
+        const notes = [];
+        const who = row.options.find((x) => x.option === o.id)?.who || [];
+        if (who.length) notes.push(`wanted by ${who.join(', ')}`);
+        if (blocked[f.id]?.[o.id]) notes.push(`does not work for ${list(blocked[f.id][o.id])}, who shared a limit`);
+        if (pf === f.id) { const pl = placeOf(this.task, o.id); if (pl) notes.push(`${estimate(PICKUP, pl).minutes} min drive from campus`); }
+        return notes.length ? `${o.name} (${notes.join('; ')})` : o.name;
+      }).join('; ')}`;
+    }).join('\n');
+  }
+  // The recent chat as text for the model. withAI: also the AI's answers, so follow-ups make sense. forKey: also that
+  // person's private exchange with the AI (only ever used for their own private question). questions: include
+  // questions people asked the AI.
+  recentChat(n, { withAI = false, forKey = null, questions = true } = {}) {
+    return this.chat.filter((m) => (!m.to || (forKey && m.to === forKey))
+        && (['chat', 'limit', 'pick'].includes(m.kind) || (questions && m.kind === 'question') || (withAI && m.answer && (m.kind === 'ai' || m.kind === 'private'))))
+      .slice(-n).map((m) => `${m.from}${m.to ? ' (private)' : ''}: ${this.anonymize(m.text)}${m.kind === 'question' ? ' (asked the AI)' : ''}${m.blocks?.length ? ` [also showed: ${m.blocks.map((b) => b.title || b.type).join(', ')}]` : ''}`).join('\n');
   }
 
   pauseAI(key, paused) {
@@ -582,7 +666,7 @@ export class Table {
     if (!p || p.isAI || this.stage !== 'chat' || this.deal) return;
     p.wantsEnd = !!value;
     this.log(p.pcode, 'end_vote', { value: !!value });
-    if (value && this.active().every((h) => h.wantsEnd)) { this.log('system', 'ended_by_group'); return this.enter('done'); }
+    if (value && this.active().every((h) => h.wantsEnd)) { this.log('system', 'ended_by_group'); this.endReason = 'group'; return this.enter('done'); }
     this.broadcast();
   }
 
@@ -619,19 +703,22 @@ export class Table {
     this.broadcast();
   }
 
-  // The AI prepares a ride (with car types, route and fare) or a table (with times), everyone approves the price,
-  // and the cost is split. by: the person who asked, or null when the AI offers it because the plan calls for it.
+  // ---------- rides and tables ----------
+  // Whether to book is a group matter and happens in the chat. Which ride, or which time, is not: the AI asks each
+  // person privately which options work for them, and the group sees only the result (never who said what).
+  // by: the person who asked, or null when the AI offers it because the plan calls for it.
   async proposeBooking(kind, by) {
     if (this.stage !== 'chat') return;
     const say = (text, type) => { if (by) this.aiSay(text, type, { kind }, true); };
-    if (this.preparing[kind] || this.bookings.some((b) => b.kind === kind && b.status !== 'declined')) {
-      if (!this.preparing[kind]) say(`There is already a ${kind === 'ride' ? 'ride' : 'table'} request above. Approve or decline that one first.`, 'booking_duplicate');
+    const what = kind === 'ride' ? 'ride' : 'table';
+    if (this.preparing[kind] || this.bookings.some((b) => b.kind === kind && b.status !== 'none')) {
+      if (!this.preparing[kind]) say(`There is already a ${what} card above.`, 'booking_duplicate');
       return;
     }
     const field = placeField(this.task);
     const placeId = field ? this.choice(field) : null;
     const place = placeId ? placeOf(this.task, placeId) : null;
-    if (!field) return say(`In this demo I can book a ${kind === 'ride' ? 'ride' : 'table'} only when the plan has a place to go, and this one does not.`, 'booking_unavailable');
+    if (!field) return say(`In this demo I can book a ${what} only when the plan has a place to go, and this one does not.`, 'booking_unavailable');
     if (!place) {
       const named = placeId ? optionName(this.task, field, placeId) : null;
       return say(named ? `${named} is not a place I can book for.` : `Pick a ${fieldName(this.task, field).toLowerCase()} first, and I will book ${kind === 'ride' ? 'the ride' : 'a table'} there.`, 'booking_needs_place');
@@ -641,79 +728,80 @@ export class Table {
       const when = this.choice('when'), budget = this.choice('budget');
       const whenName = when ? optionName(this.task, 'when', when) : null;
       const n = this.players.length;
-      const b = { id: `b${this.bookings.length + 1}`, kind, n, votes: {}, status: 'pending', code: null, by: by?.pcode || null, auto: !by, whenName, place };
+      const b = { id: `b${this.bookings.length + 1}`, kind, n, answers: {}, status: 'asking', code: null, by: by?.pcode || null, auto: !by, whenName, place };
       if (kind === 'ride') {
         const r = await route(PICKUP, place);
         b.origin = PICKUP; b.route = r.points; b.miles = r.miles; b.minutes = r.minutes; b.routeSource = r.source;
         b.options = rideOptions(r, n);
-        b.choice = b.options.reduce((x, y) => (y.total < x.total ? y : x)).id;
         b.title = `Ride to ${place.name}`;
       } else {
         const per = this.opt('budget', budget)?.per || MEAL[budget] || 20;
-        b.restaurant = place.restaurant; b.per = per;
-        b.slots = slotsFor(whenName); b.slot = b.slots[1];
+        b.restaurant = place.restaurant; b.perPerson = per; b.total = per * n;
+        b.options = slotsFor(whenName).map((x) => ({ id: x, name: x, perPerson: per }));
         b.title = `Table for ${n} at ${place.restaurant}`;
       }
-      this.price(b);
       if (this.stage !== 'chat') return;
       this.bookings.push(b);
-      const why = by ? `${by.name} asked me to book.` : kind === 'ride' ? 'You chose rideshare, so I priced the ride.' : 'You picked a place and a time, so I can hold a table.';
-      this.pushChat({ from: 'AI', name: 'AI', kind: 'booking', bookingId: b.id, text: `${why} ${b.title}. Split ${n} ways: $${b.perPerson.toFixed(2)} each. Is the price right for everyone?` });
-      this.log('AI', 'booking_proposed', { id: b.id, kind, auto: !by, total: b.total, per_person: b.perPerson, requested_by: by?.pcode || null, place: place.id, when, option: b.choice || b.slot, route: b.routeSource || null });
+      const why = by ? `${by.name} asked me to book.` : kind === 'ride' ? 'The plan says rideshare, so I priced the ride.' : 'You picked a place and a time, so I can hold a table.';
+      this.pushChat({ from: 'AI', name: 'AI', kind: 'booking', bookingId: b.id, text: `${why} ${b.title}. I am asking each person privately which ${kind === 'ride' ? 'rides' : 'times'} work for them; the group only sees the result.` });
+      this.log('AI', 'booking_proposed', { id: b.id, kind, auto: !by, requested_by: by?.pcode || null, place: place.id, when, options: b.options.map((o) => ({ id: o.id, per_person: o.perPerson })), route: b.routeSource || null });
+      this.later(45, () => this.remindBooking(b));
       this.broadcast();
     } finally { this.preparing[kind] = false; }
   }
-  price(b) {
-    if (b.kind === 'ride') { const o = b.options.find((x) => x.id === b.choice); b.total = o.total; b.perPerson = o.perPerson; b.cars = o.cars; }
-    else { b.total = b.per * b.n; b.perPerson = b.per; }
-  }
-  // Anyone can switch the car type or the time before everyone approves; a change clears earlier approvals.
-  bookingOption(key, id, option) {
+  // A person's private answer: every option that works for them, or none. They can change it until the result is in.
+  bookingAnswer(key, id, ok) {
     const p = this.player(key); const b = this.bookings.find((x) => x.id === id);
-    if (!p || p.isAI || !b || b.status !== 'pending') return;
-    if (b.kind === 'ride' && b.options.some((o) => o.id === option)) b.choice = option;
-    else if (b.kind === 'table' && b.slots.includes(option)) b.slot = option;
-    else return;
-    const had = Object.keys(b.votes).length > 0;
-    b.votes = {};
-    this.price(b);
-    this.log(p.pcode, 'booking_option', { id, option, total: b.total, approvals_reset: had });
-    this.broadcast();
+    if (!p || p.isAI || !b || b.status !== 'asking' || this.stage !== 'chat') return;
+    const ids = [...new Set((Array.isArray(ok) ? ok : []).map(String))].filter((x) => b.options.some((o) => o.id === x));
+    const changed = !!b.answers[p.pcode];
+    b.answers[p.pcode] = ids;
+    this.log(p.pcode, 'booking_answer', { id, kind: b.kind, ok: ids, none: !ids.length, changed });
+    this.settleBooking(b);
   }
-  bookingVote(key, id, value) {
-    const p = this.player(key); const b = this.bookings.find((x) => x.id === id);
-    if (!p || p.isAI || !b || b.status !== 'pending' || this.stage === 'done') return;
-    b.votes[p.pcode] = !!value;
-    this.log(p.pcode, 'booking_vote', { id, value: !!value });
-    if (!value) {
-      b.status = 'declined';
-      this.aiSay(`Not booked: ${p.name} said the price does not work. I will not book anything until everyone agrees.`, 'booking_declined', { id }, true);
+  // AI players answer by their limit: any option within what they can spend.
+  aiBookingAnswer(p, b) { const max = this.limitOf(p).maxPerPerson; return b.options.filter((o) => !max || o.perPerson <= max).map((o) => o.id); }
+  // Once every person here has answered: book the cheapest ride (or the earliest time) that works for everyone.
+  settleBooking(b) {
+    if (b.status !== 'asking' || this.stage !== 'chat') return;
+    if (!this.active().every((h) => b.answers[h.pcode])) { this.broadcast(); return; }
+    const all = [...this.humans().filter((h) => b.answers[h.pcode]).map((h) => b.answers[h.pcode]), ...this.players.filter((p) => p.isAI).map((p) => this.aiBookingAnswer(p, b))];
+    const common = b.options.filter((o) => all.every((a) => a.includes(o.id)));
+    const ride = b.kind === 'ride';
+    if (!common.length) {
+      b.status = 'none';
+      this.aiSay(`Not booked: no ${ride ? 'ride' : 'time'} works for everyone. I am not showing who said what. You can talk it over and ask me again${ride ? ', or pick another way to get there' : ''}.`, 'booking_none', { id: b.id, kind: b.kind }, true);
       return;
     }
-    if (this.active().every((h) => b.votes[h.pcode])) {
-      b.status = 'booked'; b.code = `DEMO-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
-      if (b.kind === 'ride') {
-        // The ride plays out on the map so the group can see it: a driver is found, drives to the pickup, then to the place.
-        const now = Date.now(), k = Math.max(SCALE, 0.05);
-        b.driver = driver(b.choice); b.driverFrom = driverStart(b.origin);
-        b.phases = { matchedAt: now + 3000 * k, pickupAt: now + 18000 * k, dropoffAt: now + 48000 * k };
-        this.aiSay(`Booked (demo, nothing was charged): ${b.cars > 1 ? `${b.cars} ${optionName2(b)} cars` : `a ${optionName2(b)} car`} to ${b.place.name}. I sent each person a payment request for $${b.perPerson.toFixed(2)}. Watch the map to see how the ride would go.`, 'booking_done', { id, code: b.code, option: b.choice }, true);
-      } else {
-        this.aiSay(`Reserved (demo, nothing was charged): ${b.title}, ${b.slot}. Confirmation ${b.code}. I sent each person a payment request for $${b.perPerson.toFixed(2)}.`, 'booking_done', { id, code: b.code, slot: b.slot }, true);
-      }
-      return;
+    const pick = ride ? common.reduce((x, y) => (y.total < x.total ? y : x)) : common[0];
+    b.choice = pick.id; b.status = 'booked'; b.code = `DEMO-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    if (ride) {
+      b.total = pick.total; b.perPerson = pick.perPerson; b.cars = pick.cars;
+      // The ride plays out on the map so the group can see it: a driver is found, drives to the pickup, then to the place.
+      const now = Date.now(), k = Math.max(SCALE, 0.05);
+      b.driver = driver(b.choice); b.driverFrom = driverStart(b.origin);
+      b.phases = { matchedAt: now + 3000 * k, pickupAt: now + 18000 * k, dropoffAt: now + 48000 * k };
+      this.aiSay(`Booked (demo, nothing was charged): ${pick.name} is the cheapest ride that works for everyone, so ${b.cars > 1 ? `${b.cars} ${pick.name} cars are` : `a ${pick.name} car is`} on the way to take you to ${b.place.name}. That is $${b.perPerson.toFixed(2)} each. Watch the map to see how the ride would go.`, 'booking_done', { id: b.id, kind: b.kind, code: b.code, option: b.choice, per_person: b.perPerson }, true);
+    } else {
+      b.slot = pick.id;
+      this.aiSay(`Reserved (demo, nothing was charged): ${b.title}, ${b.slot}, the earliest time that works for everyone. Confirmation ${b.code}. About $${b.perPerson.toFixed(2)} each.`, 'booking_done', { id: b.id, kind: b.kind, code: b.code, slot: b.slot, per_person: b.perPerson }, true);
     }
-    this.broadcast();
+  }
+  remindBooking(b) {
+    if (b.status !== 'asking' || this.stage !== 'chat') return;
+    for (const h of this.active()) {
+      if (b.answers[h.pcode]) continue;
+      this.aiSay(`The ${b.kind === 'ride' ? 'ride' : 'table'} card above is waiting for your answer. Your answer stays private; the group only sees the result.`, 'booking_reminder', { id: b.id }, true, h.key);
+    }
   }
 
   bookingView(b, me) {
-    // The AI respects spending limits that people chose to share.
-    const over = this.players.filter((x) => x.limitSharedAt !== null && this.limitOf(x).maxPerPerson && b.perPerson > this.limitOf(x).maxPerPerson)
-      .map((x) => `${x.limitAnon ? 'Someone' : x.name} ($${this.limitOf(x).maxPerPerson})`);
-    const { votes, by, ...rest } = b;
-    return { ...rest, warn: over.length ? `${list(over)} shared a spending limit, and this is above it.` : null,
-      mine: me ? (votes[me.pcode] ?? null) : null,
-      approved: this.humans().filter((h) => votes[h.pcode]).map((h) => h.name), waiting: this.active().filter((h) => votes[h.pcode] === undefined).map((h) => h.name) };
+    // Options above a spending limit that someone chose to share are marked, so nobody has to say it again.
+    const over = (o) => this.players.filter((x) => x.limitSharedAt !== null && this.limitOf(x).maxPerPerson && o.perPerson > this.limitOf(x).maxPerPerson).map((x) => (x.limitAnon ? 'someone' : x.name));
+    const { answers, by, ...rest } = b;
+    const need = this.active();
+    return { ...rest, options: b.options.map((o) => ({ ...o, over: over(o) })),
+      mine: me ? (answers[me.pcode] ?? null) : null, answered: need.filter((h) => answers[h.pcode]).length, of: need.length };
   }
 
   // ---------- the listening AI ----------
@@ -749,7 +837,7 @@ export class Table {
     if (this.stage !== 'chat' || !this.listening()) return;
     this.hearAt = Date.now();
     const seq = this.seq;
-    const r = await summarize({ task: this.task, summary: this.anonymize(this.summaryText()), recent: this.recentChat(16) });
+    const r = await summarize({ task: this.task, summary: this.anonymize(this.summaryText()), recent: this.recentChat(16, { questions: false }) });
     if (!r?.text || this.stage !== 'chat') return;
     this.hearing = { text: this.withNames(r.text), seq, at: Date.now() };
     this.log('AI', 'hearing_update', { text: r.text, source: r.source });
@@ -800,7 +888,12 @@ export class Table {
   // to their limit, share it when the group heads the wrong way, and otherwise go along with the people at the table,
   // so a table with AI players can still reach a plan.
   llmPlayers() { return aiMode() !== 'scripted' && process.env.AI_PLAYERS !== 'scripted'; }
-  humanChoice(f) { return f.options.find((o) => o.who.some((c) => !this.byCode(c)?.isAI)) || null; }
+  // What the people at the table want for one part, when they agree with each other. If people want different
+  // things, AI players stay out of it: a seat filler must not decide a disagreement between people.
+  humanChoice(f) {
+    const wanted = f.options.filter((o) => o.who.some((c) => !this.byCode(c)?.isAI));
+    return wanted.length === 1 ? wanted[0] : null;
+  }
   // What the people at the table want that this AI player can go along with, and whether something they want breaks its limit.
   followPlan(p) {
     const mine = this.prefs[p.pcode] || {}; const lim = this.limitOf(p);
@@ -879,7 +972,9 @@ export class Table {
       if (reveal) { p.revealed = true; p.limitSharedAt = this.t; p.limitVia = 'self'; this.log(p.pcode, 'limit_shared', { limit: this.limitId(p), via: 'self', anonymous: false }); }
       p.msgs++; p.lastMsgAt = Date.now();
       const text = this.withNames(out.text);
-      this.pushChat({ from: p.pcode, name: p.name, kind: reveal ? 'limit' : 'chat', text });
+      // On listening tables, people can tap "Me too" on what this message asked for.
+      const said = this.mode === 'listen' ? Object.entries(picks).filter(([f]) => out.picks && f in out.picks).map(([field, option]) => ({ field, option })) : [];
+      this.pushChat({ from: p.pcode, name: p.name, kind: reveal ? 'limit' : 'chat', text, ...(said.length ? { sup: said } : {}) });
       this.log(p.pcode, 'chat_message', { text: this.anonymize(text), length: text.length, ai_player: o.reason, source: out.source || 'scripted', picks });
       this.afterChange();
     } finally { p.speaking = false; }
@@ -952,7 +1047,8 @@ export class Table {
     if (this.stage === 'setup' && act.every((h) => h.ready)) return this.enter('chat');
     if (this.stage === 'chat' && !this.deal) {
       if (planComplete(this.task, this.plan) && act.every((h) => this.accepts[h.key])) return this.lockDeal();
-      if (act.every((h) => h.wantsEnd)) return this.enter('done');
+      if (act.every((h) => h.wantsEnd)) { this.endReason = 'group'; return this.enter('done'); }
+      for (const b of this.bookings) this.settleBooking(b);
     }
     this.broadcast();
   }
@@ -960,7 +1056,7 @@ export class Table {
   onTick() {
     if (this.stage !== 'done') this.checkPresence();
     if (this.stage === 'chat' && !this.deal) {
-      if (Date.now() - this.stageStartedAt > sec(CHAT_MAX)) { this.log('system', 'ended_by_backstop'); return this.enter('done'); }
+      if (Date.now() - this.stageStartedAt > sec(CHAT_MAX)) { this.log('system', 'ended_by_backstop'); this.endReason = 'backstop'; return this.enter('done'); }
       if (this.listening()) this.listen();
       // Every change already broadcasts; this slower refresh only keeps away markers current.
       if (Date.now() - this.lastBroadcast > 5000) this.broadcast();
@@ -973,7 +1069,16 @@ export class Table {
     if (this.stage === 'done') return;
     this.log('host', 'host_advanced', { from: this.stage }, 'host');
     if (this.stage === 'setup') return this.enter('chat');
-    if (this.stage === 'chat') return this.enter('done');
+    if (this.stage === 'chat') { this.endReason = 'host'; return this.enter('done'); }
+  }
+  // A note from the host to the table, for example "about two minutes left". Shown as a system line, not as the AI.
+  hostAnnounce(text) {
+    text = String(text || '').trim().slice(0, 200);
+    if (!text || this.stage !== 'chat') return false;
+    this.pushChat({ from: 'system', name: 'Host', kind: 'system', host: true, text: `From your host: ${text}` });
+    this.log('host', 'host_announcement', { text }, 'host');
+    this.broadcast();
+    return true;
   }
   hostPause(paused) { this.aiPaused = !!paused; this.log('host', 'host_ai_paused', { paused: this.aiPaused }, 'host'); this.broadcast(); }
   hostSay(text) {
@@ -1025,7 +1130,7 @@ export class Table {
       panel: this.panelView(),
       // the model's line is used while it is fresh; otherwise the rule-based line
       hearing: this.mode === 'listen' && chatting ? (this.hearing && this.hearing.at > (this.lastChangeAt || 0) - 15000 ? this.hearing.text : this.hearingRule()) : null,
-      aiThinking: !!this.aiThinking,
+      aiThinking: this.thinkingPublic > 0 || this.thinkingFor.has(key),
       quiet: this.mode === 'listen' && chatting ? this.humans().filter((h) => h.msgs === 0 && h.picks === 0).map((h) => h.name) : [],
       plan: final, complete: planComplete(this.task, final), deal: this.deal, outcome: this.outcome,
       chat: this.chat.filter((m) => !m.to || m.to === key).slice(-80).map(({ to, ...m }) => m),
@@ -1043,7 +1148,9 @@ export class Table {
       summary: this.summaryText(), plan: this.plan, complete: planComplete(this.task, this.plan), deal: this.deal, outcome: this.outcome,
       aiPaused: this.aiPaused, pausedBy: this.pausedBy, interjections: this.interjections,
       players: this.players.map((p) => ({ pcode: p.pcode, name: p.name, isAI: p.isAI, msgs: p.msgs, accepted: !!this.accepts[p.key], away: this.isAway(p), limitUp: p.limitSharedAt !== null || p.limitMentionedAt !== null })),
-      chat: this.chat.slice(-12).map((m) => ({ ...m, to: m.to ? this.player(m.to)?.name : null })), pendingQuestions: this.pendingQuestions
+      // Private exchanges are not shown in the live console (it is often on a projector); they stay in the research logs.
+      chat: this.chat.slice(-12).map((m) => (m.to ? { id: m.id, t: m.t, from: m.from, name: m.name, kind: m.kind, to: this.player(m.to)?.name, text: m.from === 'AI' ? 'a private note (not shown here)' : 'a private question (not shown here)' }
+        : { id: m.id, t: m.t, from: m.from, name: m.name, kind: m.kind, text: m.text, to: null })), pendingQuestions: this.pendingQuestions
     };
   }
 

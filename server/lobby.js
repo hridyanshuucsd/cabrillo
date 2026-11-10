@@ -95,9 +95,16 @@ export class Lobby {
     const n = room.tablesMade, S = room.order.length;
     // 'mixed' gives each table the next scenario in the room's shuffled order, so no two tables share one until all are used.
     const taskId = room.task === MIXED ? room.order[n % S] : room.task;
-    // "compare" alternates the listening AI and the answer-only AI across tables. When scenarios repeat, the repeat gets the other mode.
-    const flip = room.task === MIXED ? Math.floor(n / S) : 0;
-    const mode = room.aiMode === 'compare' ? ((n + flip) % 2 === 0 ? 'listen' : 'ask') : room.aiMode;
+    // "compare" keeps the two AI modes balanced: a new table gets whichever mode fewer tables in this session have.
+    // (Counting tables that exist, not tables ever made, so a table that closed while empty does not skew the split.)
+    // On a tie, a scenario that is repeating gets the mode it has not had yet; otherwise the listening AI goes first.
+    let mode = room.aiMode;
+    if (room.aiMode === 'compare') {
+      const live = this.roomTables(room);
+      const listen = live.filter((t) => t.mode === 'listen').length, ask = live.length - listen;
+      const had = live.filter((t) => t.task.id === taskId).map((t) => t.mode);
+      mode = listen !== ask ? (listen < ask ? 'listen' : 'ask') : (had.includes('listen') && !had.includes('ask') ? 'ask' : 'listen');
+    }
     room.tablesMade++;
     const table = new Table({ io: this.io, room, humans, mode, taskId, number: n + 1, forming, target: room.kind === 'class' ? room.groupSize : 5, onDone: (t) => this.onDone(t) });
     this.tables.set(table.id, table);

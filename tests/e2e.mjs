@@ -122,10 +122,26 @@ try {
   await x.locator('.bubble.private').getByRole('button', { name: /without my name/ }).click();
   await y.getByText(/Someone at this table asked me to pass this on without their name/).waitFor({ timeout: 5000 });
   check('the AI can pass a limit on without a name', !(await body(y)).includes(`${xn} asked me`));
-  // the plan now takes the option that breaks the shared limit: the AI speaks up
-  await say(z, `${word} works for me`);
+  // the plan now takes the option that breaks the shared limit: the AI speaks up. z agrees with one tap on "Me too".
+  await z.getByRole('button', { name: `Me too: ${bad}` }).click();
+  await x.getByText(`${zn} agreed with ${yn}: ${bad}.`).waitFor({ timeout: 5000 });
+  check('"Me too" under a message picks what that message asked for', !(await z.getByRole('button', { name: `Me too: ${bad}` }).count()));
   await y.getByText(/does not fit a limit that someone shared without their name/).waitFor({ timeout: 5000 });
   check('the AI speaks up when the plan stops fitting a shared limit', true);
+  // a private question to the AI: only the person who asked sees the question and the answer
+  await x.getByRole('button', { name: 'Ask AI' }).click();
+  await x.getByRole('radio', { name: 'Only I see it' }).click();
+  await x.getByLabel('Message').fill('what have we decided so far, just between us?');
+  await x.getByRole('button', { name: 'Send', exact: true }).click();
+  await x.locator('.bubble.private', { hasText: 'Plan so far' }).waitFor({ timeout: 8000 });
+  await x.waitForTimeout(400);
+  check('a private question and its answer are seen only by the person who asked', (await x.getByText('asked the AI privately').count()) === 1 && !(await body(y)).includes('just between us') && !(await body(y)).includes('Plan so far:'));
+  await shot(x, '05b_private_question');
+  // a what-if question to the AI is not a vote
+  const before = await x.locator('.planbar').innerText();
+  await say(x, '@AI if we took an uber, what would each of us pay?');
+  await x.waitForTimeout(900);
+  check('a what-if question to the AI does not change anyone\'s picks', (await x.locator('.planbar').innerText()) === before);
   // way 2 of 3: say it myself, from a draft in the message box
   await y.getByRole('button', { name: 'Your private limit' }).click();
   await shot(y, '06_limit_sheet');
@@ -187,7 +203,7 @@ try {
   check('the plan locks when everyone accepts, and results open', true);
   const res = await body(x);
   check('results show whose limits came up and whether the plan respects them', /private limits came up/.test(res) && /The plan works with this limit/.test(res) && /Shared without a name/.test(res));
-  await x.getByRole('button', { name: '4', exact: true }).click();
+  for (const q of ['How much did the AI help your group?', 'The plan we made works for me.', 'It was easy to bring up my limit.', 'The group, not the AI, was in charge of the plan.']) await x.getByRole('button', { name: `${q} 4 of 5` }).click();
   await x.getByRole('button', { name: 'About right' }).click();
   await x.getByRole('button', { name: 'Yes', exact: true }).click();
   await x.getByRole('button', { name: 'Send feedback' }).click();
@@ -205,14 +221,24 @@ try {
   check('answer-only table: taps fill in the plan', true);
   await say(u, '@AI how do we get to Old Town?');
   await u.getByText(/easy by trolley or bus/).first().waitFor({ timeout: 8000 });
+  const uText = await body(u);
+  check('answer-only AI made no unprompted moves', !/Before anything is settled|Tap to pick\.|Heads up/.test(uText) && !(await u.getByText('Only you see this').count()) && !(await u.getByRole('button', { name: /^Me too/ }).count()));
   await say(u, '@AI can you book an uber for us?');
   await u.getByRole('group', { name: /^Ride to / }).first().waitFor({ timeout: 6000 });
   check('answer-only AI answers and books only when asked', true);
-  await v.getByRole('button', { name: 'Not for me' }).click();
-  await u.getByText(/Not booked/).first().waitFor({ timeout: 5000 });
-  check('one person can stop a booking', true);
-  const uText = await body(u);
-  check('answer-only AI made no unprompted moves', !/Before anything is settled|Tap to pick\.|Heads up/.test(uText) && !(await u.getByText('Only you see this').count()));
+  // each person tells the AI privately which rides work; here one person says none do
+  const rideOf = (p) => p.getByRole('group', { name: /^Ride to / }).first();
+  await rideOf(u).getByRole('checkbox', { name: /^Standard/ }).click();
+  await rideOf(u).getByRole('button', { name: 'Send my answer' }).click();
+  await rideOf(v).getByRole('button', { name: 'None work for me' }).click();
+  await rideOf(u).getByText('2 of 3 answered').waitFor({ timeout: 5000 });
+  check('ride answers are private: others see only how many answered', !(await rideOf(u).getByText(/none of these/i).count()) && (await rideOf(v).getByText(/none of these/i).count()) === 1);
+  await rideOf(w).getByRole('checkbox', { name: /^XL/ }).click();
+  await rideOf(w).getByRole('button', { name: 'Send my answer' }).click();
+  await u.getByText(/Not booked: no ride works for everyone/).first().waitFor({ timeout: 5000 });
+  const An = listenFirst ? ['Jordan', 'Lena', 'Omar'] : ['Maya', 'Dev', 'Priya'];
+  const notBooked = await u.getByText(/Not booked: no ride works for everyone/).first().innerText();
+  check('with no ride that works for everyone, nothing is booked and nobody is named', !An.some((n) => notBooked.includes(n)), notBooked);
   await shot(u, '11_chat_answer_only');
   // no timer, so a table that cannot agree ends only when every person asks to
   for (const p of A) { await p.getByRole('button', { name: 'Task' }).click(); await p.getByRole('button', { name: 'End without a plan' }).click(); if (p !== w) await p.getByRole('button', { name: 'Close' }).click(); }
@@ -223,7 +249,7 @@ try {
   // ---------- data export ----------
   const csv = await (await host.request.get(`${BASE}/api/export/${code}/logs.csv`)).text();
   const types = new Set(csv.split('\n').slice(1).map((l) => l.split(',')[4]));
-  const need = ['session_started', 'stage_started', 'limit_changed', 'ready_clicked', 'chat_message', 'panel_update', 'chat_parsed', 'pick', 'plan_update', 'plan_complete', 'limit_alert_private', 'limit_shared', 'shared_limit_conflict', 'ai_paused_by_player', 'question_asked', 'ai_answer', 'booking_proposed', 'booking_vote', 'booking_declined', 'vote', 'accepts_reset', 'deal_locked', 'end_vote', 'ended_by_group', 'session_outcome', 'feedback_submitted'];
+  const need = ['session_started', 'stage_started', 'limit_changed', 'ready_clicked', 'chat_message', 'panel_update', 'chat_parsed', 'pick', 'plan_update', 'plan_complete', 'limit_alert_private', 'limit_shared', 'shared_limit_conflict', 'ai_paused_by_player', 'question_asked', 'ai_answer', 'booking_proposed', 'booking_answer', 'booking_none', 'me_too', 'player_outcome', 'vote', 'accepts_reset', 'deal_locked', 'end_vote', 'ended_by_group', 'session_outcome', 'feedback_submitted'];
   const missing = need.filter((t) => !types.has(t));
   check('log export contains every event type', missing.length === 0, missing.length ? `missing: ${missing}` : `${csv.split('\n').length - 1} rows`);
   check('log export has no player names', !/Maya|Priya|Jordan|Lena|Omar|\bDev\b/.test(csv));
@@ -255,7 +281,7 @@ try {
   await shot(solo, '13_quick_with_ai');
 
   await host.goto(`${BASE}/history`);
-  check('history page loads for accounts', await host.getByText('My past sessions').waitFor({ timeout: 5000 }).then(() => true, () => false));
+  check('the history page lists the class session the host ran, with its analytics', await host.getByText('Class sessions I hosted').waitFor({ timeout: 5000 }).then(() => true, () => false) && (await host.getByRole('link', { name: 'Analytics' }).count()) >= 1);
 } catch (e) {
   console.error('TEST ERROR', e);
   results.push({ name: 'exception', ok: false });

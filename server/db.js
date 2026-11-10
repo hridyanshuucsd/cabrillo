@@ -71,6 +71,10 @@ export async function migrate() {
     alter table rooms add column if not exists ai_mode text;
     alter table feedback add column if not exists ai_amount text;
     alter table rooms add column if not exists group_size int;
+    alter table feedback add column if not exists plan_ok int;
+    alter table feedback add column if not exists comfort int;
+    alter table feedback add column if not exists in_charge int;
+    create index if not exists sessions_room on sessions (room_code);
   `);
 }
 

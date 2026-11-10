@@ -37,6 +37,21 @@ function usePhoneViewport(active) {
   return keyboard;
 }
 
+// True while the connection to the server is up. A short drop (under 1.5 seconds) is not shown.
+function useOnline() {
+  const [online, setOnline] = useState(true);
+  useEffect(() => {
+    const s = getSocket(); let t = null;
+    const up = () => { clearTimeout(t); setOnline(true); };
+    const down = () => { clearTimeout(t); t = setTimeout(() => setOnline(false), 1500); };
+    s.on('connect', up); s.on('disconnect', down);
+    if (!s.connected) down();
+    return () => { clearTimeout(t); s.off('connect', up); s.off('disconnect', down); };
+  }, []);
+  return online;
+}
+const Offline = () => <div className="offline" role="status">Connection lost. Reconnecting...</div>;
+
 // ---------- page ----------
 export default function Game() {
   const { id } = useParams();
@@ -57,14 +72,15 @@ export default function Game() {
   useEffect(() => { if (lastMsg && typing[lastMsg.from]) setTyping((x) => { const y = { ...x }; delete y[lastMsg.from]; return y; }); }, [lastMsg?.id]);
   const left = useCountdown(g?.stageEndsAt, g?.serverNow);
   const keyboard = usePhoneViewport(!!g && g.stage === 'chat');
+  const online = useOnline();
 
   if (error) return <div className="wrap stack"><TopBar back /><div className="error">{error}</div><Link className="btn" to="/">Back home</Link></div>;
   if (!g) return <div className="wrap center-screen"><div className="spinner" aria-hidden="true" /><p className="muted">Joining your table...</p></div>;
   const send = (ev, extra) => getSocket().emit(ev, { sessionId: id, ...extra });
 
-  if (g.stage === 'chat') return <ChatScreen g={g} send={send} keyboard={keyboard} typers={[...(g.aiThinking ? ['The AI'] : []), ...Object.values(typing).map((t) => t.name)]} />;
+  if (g.stage === 'chat') return <ChatScreen g={g} send={send} keyboard={keyboard} online={online} typers={[...(g.aiThinking ? ['The AI'] : []), ...Object.values(typing).map((t) => t.name)]} />;
   if (g.stage === 'done') return <Results g={g} />;
-  return <Briefing g={g} send={send} left={left} />;
+  return <>{!online && <Offline />}<Briefing g={g} send={send} left={left} /></>;
 }
 
 // ---------- shared pieces ----------
@@ -186,9 +202,9 @@ function Briefing({ g, send, left }) {
         {head('How the chat works', 3)}
         {dots}
         <section className="card stack how">
-          <div className="how-row"><span className="how-n">1</span><span><strong>Say what you want, or tap it.</strong> Tap a part of the plan above the chat to pick an option. A tap counts the same as saying it.</span></div>
+          <div className="how-row"><span className="how-n">1</span><span><strong>Say what you want, or tap it.</strong> Tap a part of the plan above the chat to pick an option. A tap counts the same as saying it.{g.mode === 'listen' ? ' Under someone else\'s message, "Me too" picks what they asked for.' : ''}</span></div>
           <div className="how-row"><span className="how-n">2</span><span><strong>Your limit is yours to share.</strong> Tap "Your private limit" at any time. You can say it yourself, or ask the AI to pass it on with your name or without it.</span></div>
-          <div className="how-row"><span className="how-n ai">AI</span><span>{AI_HELP[g.mode]}</span></div>
+          <div className="how-row"><span className="how-n ai">AI</span><span>{AI_HELP[g.mode]} Ask it anything with the AI button: in the group, or privately so only you see the answer.</span></div>
           <div className="how-row"><span className="how-n">3</span><span><strong>No timer.</strong> The plan is what most of the table wants. It locks when everyone taps Accept.</span></div>
         </section>
         <div className="sticky-foot stack" style={{ gap: 4 }}>
@@ -201,11 +217,12 @@ function Briefing({ g, send, left }) {
 }
 
 // ---------- step 2: chat ----------
-function ChatScreen({ g, send, keyboard, typers }) {
+function ChatScreen({ g, send, keyboard, typers, online }) {
   const [sheet, setSheet] = useState(null); // { type: 'field', id } | { type: 'board' } | { type: 'limit' } | { type: 'info' } | { type: 'accept' }
   const [draft, setDraft] = useState(null); // text placed in the message box by "Say it myself"
+  const [ask, setAsk] = useState('off');    // 'off' | 'group' (everyone sees the question) | 'private' (only you do)
   const close = () => setSheet(null);
-  const sayMyself = () => { setDraft({ text: g.me.limit.say, n: Date.now() }); close(); };
+  const sayMyself = () => { setAsk('off'); setDraft({ text: g.me.limit.say, n: Date.now() }); close(); };
   const share = (mode) => { send('game:share', { mode }); close(); };
   const humans = g.players.filter((p) => !p.isAI);
   return (
@@ -219,14 +236,16 @@ function ChatScreen({ g, send, keyboard, typers }) {
           <button className="btn ghost small" onClick={() => setSheet({ type: 'info' })}>Task</button>
         </div>
       </header>
+      {!online && <Offline />}
       {!keyboard && <Board g={g} open={setSheet} />}
-      <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} onAccept={() => {
+      <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} followUp={() => setAsk('private')} onAccept={() => {
         if (g.me.accepted) return send('game:accept', { value: false });
         if (g.me.limit.custom || g.me.limit.ok === false) return setSheet({ type: 'accept' });
         send('game:accept', { value: true });
       }} />
+      {!keyboard && <Waiting g={g} />}
       {!keyboard && <BottomBar g={g} send={send} open={setSheet} humans={humans} />}
-      <Composer g={g} send={send} draft={draft} />
+      <Composer g={g} send={send} draft={draft} ask={ask} setAsk={setAsk} />
 
       {sheet?.type === 'field' && <FieldSheet g={g} send={send} id={sheet.id} onClose={close} />}
       {sheet?.type === 'board' && <BoardSheet g={g} send={send} onClose={close} open={setSheet} />}
@@ -382,6 +401,17 @@ function InfoSheet({ g, send, onClose, humans }) {
   );
 }
 
+// Shown when the AI is waiting for a private answer from you (which rides or times work), so it does not scroll away.
+function Waiting({ g }) {
+  const b = (g.bookings || []).find((x) => x.status === 'asking' && x.mine === null);
+  if (!b) return null;
+  return (
+    <button className="todo-bar" onClick={() => document.getElementById(`booking-${b.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })}>
+      <span className="only-you">Only you</span><span className="grow">The AI is waiting for your answer about the {b.kind === 'ride' ? 'ride' : 'table'}.</span><strong>Answer</strong>
+    </button>
+  );
+}
+
 // Above the message box: your private limit on the left, the plan's progress and Accept on the right.
 function BottomBar({ g, send, open, humans }) {
   const l = g.me.limit;
@@ -442,7 +472,7 @@ function AcceptSheet({ g, send, onClose, open }) {
 }
 
 // ---------- messages and the message box ----------
-function Messages({ g, send, typers, sayMyself, share, onAccept }) {
+function Messages({ g, send, typers, sayMyself, share, onAccept, followUp }) {
   const box = useRef(null);
   const atBottom = useRef(true);
   const [newBelow, setNewBelow] = useState(false);
@@ -469,8 +499,8 @@ function Messages({ g, send, typers, sayMyself, share, onAccept }) {
           }
           if (m.kind === 'map') return <MapCard key={m.id} m={(g.maps || []).find((x) => x.id === m.mapId)} />;
           if (m.kind === 'plan') return <PlanCard key={m.id} g={g} m={m} onAccept={onAccept} />;
-          if (m.kind === 'system') return <div key={m.id} className="m-system">{m.text}</div>;
-          if (m.kind === 'pick') return <div key={m.id} className="m-pick">{m.from === g.me.pcode ? m.text.replace(m.name, 'You').replace('their pick', 'your pick') : m.text}</div>;
+          if (m.kind === 'system') return <div key={m.id} className={`m-system ${m.host ? 'host' : ''}`}>{m.text}</div>;
+          if (m.kind === 'pick') return <div key={m.id} className="m-pick">{m.from === g.me.pcode ? m.text.replace(m.name, 'You').replace('their pick', 'your pick') : m.text.replace(`with ${g.me.name}:`, 'with you:')}</div>;
           const prev = g.chat[i - 1];
           const mine = m.from === g.me.pcode;
           const first = !prev || prev.from !== m.from || ['system', 'booking', 'map', 'pick', 'plan'].includes(prev.kind) || m.kind !== prev.kind;
@@ -486,18 +516,23 @@ function Messages({ g, send, typers, sayMyself, share, onAccept }) {
                   {m.card === 'compare' && m.compare && <Compare c={m.compare} g={g} send={send} />}
                   {m.blocks?.map((b, k) => <Block key={k} b={b} g={g} send={send} />)}
                   {m.actions === 'limit' && unshared && <ShareOptions sayMyself={sayMyself} share={share} />}
+                  {m.kind === 'private' && m.answer && !g.deal && <div className="bubble-actions"><button className="metoo" onClick={followUp}>Ask a follow-up privately</button></div>}
                 </div>
               </div>
             );
           }
-          const label = m.kind === 'limit' ? 'shared a limit' : m.kind === 'question' ? 'asked the AI' : null;
+          const label = m.kind === 'limit' ? 'shared a limit' : m.kind === 'question' ? (m.private ? 'asked the AI privately' : 'asked the AI') : null;
+          // "Me too": the options this message asked for that you have not picked yet (listening tables).
+          const more = !mine && !g.deal && m.sup ? m.sup.filter((x) => g.me.prefs[x.field] !== x.option) : [];
+          const optName = (x) => g.task.fields.find((f) => f.id === x.field)?.options.find((o) => o.id === x.option)?.name;
           return (
             <div key={m.id} className={`m-row ${mine ? 'mine' : ''} ${first ? 'first' : ''}`}>
               {!mine && (first && p ? <Avatar p={p} /> : <span className="avatar-gap" />)}
-              <div className={`bubble ${mine ? 'mine' : ''} ${m.kind}`}>
+              <div className={`bubble ${mine ? 'mine' : ''} ${m.kind} ${m.private ? 'private-q' : ''}`}>
                 {(first || label) && !mine && <div className="m-name" style={{ color: p?.color }}>{m.name}{label ? <span className="m-tag"> {label}</span> : null}</div>}
-                {mine && label && <div className="m-name m-tag">You {label}</div>}
+                {mine && label && <div className="m-name m-tag">You {label}{m.private && <span className="only-you">Only you see this</span>}</div>}
                 {m.text}
+                {more.length > 0 && <div className="bubble-actions"><button className="metoo" onClick={() => send('game:metoo', { msgId: m.id })}>Me too: {more.map(optName).join(', ')}</button></div>}
               </div>
             </div>
           );
@@ -551,27 +586,44 @@ function Block({ b, g, send }) {
   );
 }
 
-function Composer({ g, send, draft }) {
+// The message box. The AI button switches it to asking the AI: in the group (everyone sees the question and the
+// answer) or privately (only you see either). Typing "@AI" in a normal message also asks in the group.
+function Composer({ g, send, draft, ask, setAsk }) {
   const [text, setText] = useState('');
-  const [askAI, setAskAI] = useState(false);
   const [isLimit, setIsLimit] = useState(false); // the text started as the "Say it myself" draft
   const input = useRef(null);
   const lastTyping = useRef(0);
-  useEffect(() => { if (draft) { setText(draft.text); setIsLimit(true); setAskAI(false); input.current?.focus(); } }, [draft?.n]);
+  const lastKind = useRef('group');                // how this person last asked the AI
+  useEffect(() => { if (draft) { setText(draft.text); setIsLimit(true); input.current?.focus(); } }, [draft?.n]);
+  useEffect(() => { if (ask !== 'off') { lastKind.current = ask; setIsLimit(false); input.current?.focus(); } }, [ask]);
   const go = () => {
     const t = text.trim(); if (!t) return;
-    send(askAI ? 'game:ask' : 'game:chat', { text: t, limit: isLimit && !askAI });
-    setText(''); setAskAI(false); setIsLimit(false);
+    if (ask !== 'off') send('game:ask', { text: t, private: ask === 'private' });
+    else send('game:chat', { text: t, limit: isLimit });
+    setText(''); setAsk('off'); setIsLimit(false);
     input.current?.focus(); // keep the keyboard open between messages
   };
   return (
     <form className="composer" onSubmit={(e) => { e.preventDefault(); go(); }}>
-      {isLimit && <div className="composer-note">Draft of your limit. Change the words if you like, then send. <button type="button" className="linkbtn" onClick={() => { setText(''); setIsLimit(false); }}>Discard</button></div>}
+      {isLimit && ask === 'off' && <div className="composer-note">Draft of your limit. Change the words if you like, then send. <button type="button" className="linkbtn" onClick={() => { setText(''); setIsLimit(false); }}>Discard</button></div>}
+      {ask !== 'off' && (
+        <div className="composer-note ask" role="radiogroup" aria-label="Who sees your question to the AI">
+          <span>Ask the AI</span>
+          <span className="seg">
+            <button type="button" role="radio" aria-checked={ask === 'group'} className={ask === 'group' ? 'on' : ''} onMouseDown={(e) => e.preventDefault()} onClick={() => setAsk('group')}>Everyone sees it</button>
+            <button type="button" role="radio" aria-checked={ask === 'private'} className={ask === 'private' ? 'on' : ''} onMouseDown={(e) => e.preventDefault()} onClick={() => setAsk('private')}>Only I see it</button>
+          </span>
+        </div>
+      )}
       <div className="composer-row">
-        <button type="button" className={`ai-toggle ${askAI ? 'on' : ''}`} aria-pressed={askAI} aria-label="Ask AI" onMouseDown={(e) => e.preventDefault()} onClick={() => { setAskAI(!askAI); input.current?.focus(); }}>AI</button>
+        <button type="button" className={`ai-toggle ${ask !== 'off' ? 'on' : ''}`} aria-pressed={ask !== 'off'} aria-label="Ask AI" onMouseDown={(e) => e.preventDefault()} onClick={() => setAsk(ask === 'off' ? lastKind.current : 'off')}>AI</button>
         <input ref={input} type="text" value={text} maxLength={300} aria-label="Message" enterKeyHint="send" autoComplete="off" autoCorrect="on" disabled={!!g.deal}
-          placeholder={askAI ? 'Ask the AI anything' : 'Message, or @AI to ask'}
-          onChange={(e) => { setText(e.target.value); if (!e.target.value) setIsLimit(false); if (Date.now() - lastTyping.current > 2000) { lastTyping.current = Date.now(); send('game:typing'); } }} />
+          placeholder={ask === 'private' ? 'Ask the AI privately' : ask === 'group' ? 'Ask the AI in the group' : 'Message, or @AI to ask'}
+          onChange={(e) => {
+            setText(e.target.value); if (!e.target.value) setIsLimit(false);
+            // nobody sees "typing" while you write a private question
+            if (ask !== 'private' && Date.now() - lastTyping.current > 2000) { lastTyping.current = Date.now(); send('game:typing'); }
+          }} />
         <button className="send" aria-label="Send" disabled={!text.trim()} onMouseDown={(e) => e.preventDefault()}>
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 12l16-8-6 16-2.5-6.5L4 12z" fill="currentColor" /></svg>
         </button>
@@ -621,24 +673,31 @@ function Results({ g }) {
 }
 
 function Feedback({ g }) {
-  const [f, setF] = useState({ aiHelpful: 0, aiAmount: '', playAgain: '', comment: '' });
+  const [f, setF] = useState({ aiHelpful: 0, aiAmount: '', planOk: 0, comfort: 0, inCharge: 0, playAgain: '', comment: '' });
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
   if (sent) return <div className="card thanks"><strong>Thank you.</strong> Your answers help our class project.{g.surveyUrl && <> Please also fill in the <a href={g.surveyUrl} target="_blank" rel="noreferrer">short survey</a>.</>}</div>;
   const pick = (k, opts) => <div className="pick even">{opts.map(([v, label]) => <button key={v} className={f[k] === v ? 'on' : ''} aria-pressed={f[k] === v} onClick={() => setF({ ...f, [k]: v })}>{label}</button>)}</div>;
+  const scale = (k, q, lo, hi) => (
+    <div className="stack" style={{ gap: 6 }} role="group" aria-label={q}><span className="q">{q}</span>
+      <div className="scale">{[1, 2, 3, 4, 5].map((n) => <button key={n} className={f[k] === n ? 'on' : ''} aria-pressed={f[k] === n} aria-label={`${q} ${n} of 5`} onClick={() => setF({ ...f, [k]: n })}>{n}</button>)}</div>
+      <div className="row between small muted"><span>{lo}</span><span>{hi}</span></div></div>
+  );
+  const done = f.aiHelpful && f.aiAmount && f.comfort && f.inCharge && f.playAgain && (!g.deal || f.planOk);
   return (
     <section className="card stack">
-      <h2 style={{ margin: 0 }}>Three quick questions</h2>
-      <div className="stack" style={{ gap: 6 }}><span className="q">How much did the AI help your group?</span>
-        <div className="scale">{[1, 2, 3, 4, 5].map((n) => <button key={n} className={f.aiHelpful === n ? 'on' : ''} aria-pressed={f.aiHelpful === n} onClick={() => setF({ ...f, aiHelpful: n })}>{n}</button>)}</div>
-        <div className="row between small muted"><span>Not at all</span><span>A lot</span></div></div>
+      <h2 style={{ margin: 0 }}>Six quick taps</h2>
+      {scale('aiHelpful', 'How much did the AI help your group?', 'Not at all', 'A lot')}
       <div className="stack" style={{ gap: 6 }}><span className="q">The AI spoke up...</span>
         {pick('aiAmount', [['too_little', 'Too little'], ['about_right', 'About right'], ['too_much', 'Too much']])}</div>
+      {g.deal && scale('planOk', 'The plan we made works for me.', 'Disagree', 'Agree')}
+      {scale('comfort', 'It was easy to bring up my limit.', 'Disagree', 'Agree')}
+      {scale('inCharge', 'The group, not the AI, was in charge of the plan.', 'Disagree', 'Agree')}
       <div className="stack" style={{ gap: 6 }}><span className="q">Would you use this again?</span>
         {pick('playAgain', [['yes', 'Yes'], ['maybe', 'Maybe'], ['no', 'No']])}</div>
       <label className="field small">Anything else? (optional)<textarea value={f.comment} maxLength={1000} onChange={(e) => setF({ ...f, comment: e.target.value })} /></label>
       {error && <div className="error">{error}</div>}
-      <button className="btn" disabled={!f.aiHelpful || !f.aiAmount || !f.playAgain} onClick={async () => { try { await api('/api/feedback', { sessionId: g.id, ...f }); setSent(true); } catch (e) { setError(e.message); } }}>Send feedback</button>
+      <button className="btn" disabled={!done} onClick={async () => { try { await api('/api/feedback', { sessionId: g.id, ...f }); setSent(true); } catch (e) { setError(e.message); } }}>Send feedback</button>
       {g.surveyUrl && <a href={g.surveyUrl} target="_blank" rel="noreferrer" className="small">Open the full feedback survey</a>}
     </section>
   );

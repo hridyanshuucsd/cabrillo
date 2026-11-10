@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { emit, getSocket, mmss, useCountdown, useSocketEvent } from '../lib.js';
 import TopBar from '../components/Brand.jsx';
 
@@ -35,7 +35,10 @@ export default function Host() {
   const done = list.filter((t) => t.stage === 'done');
   const people = list.reduce((a, t) => a + t.players.filter((p) => !p.isAI).length, 0);
   const exp = (f) => `/api/export/${code}/${f}`;
-  const act = async (ev, extra) => { const r = await emit(ev, { code, ...extra }); if (r.error) setError(r.error); };
+  const act = async (ev, extra) => { const r = await emit(ev, { code, ...extra }); if (r.error) setError(r.error); return r; };
+  const [note, setNote] = useState('');
+  const [sentNote, setSentNote] = useState('');
+  const announce = async (text) => { const r = await act('host:announce', { text }); if (r?.ok) { setSentNote(`Sent to ${r.tables} ${r.tables === 1 ? 'table' : 'tables'}: "${text}"`); setNote(''); } };
 
   return (
     <div className="wide stack host">
@@ -67,6 +70,14 @@ export default function Host() {
           </label>
           <button className="btn" disabled={!filling.length} onClick={() => act('host:start-all')}>{filling.length > 1 ? `Start all ${filling.length} filling tables now` : filling.length ? 'Start the filling table now' : 'No tables are filling'}</button>
           <button className="btn ghost small" disabled={!playing.length} onClick={() => { if (window.confirm(`End all ${playing.length} running tables now? The chat has no timer, so this is how you wrap up. People go to the results screen.`)) act('host:end-all'); }}>End all running tables</button>
+          <form className="stack" style={{ gap: 6 }} onSubmit={(e) => { e.preventDefault(); if (note.trim()) announce(note.trim()); }}>
+            <span className="label">Message to every table that is chatting</span>
+            <div className="row wrap-row" style={{ gap: 6 }}>
+              {['About 2 minutes left. Try to settle on a plan.', 'Please wrap up now and accept a plan if you can.'].map((x) => <button key={x} type="button" className="btn ghost small" disabled={!playing.length} onClick={() => announce(x)}>{x.split('.')[0]}</button>)}
+            </div>
+            <div className="row"><input type="text" className="grow" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder="Or write your own" aria-label="Message to every table" /><button className="btn small dark" disabled={!note.trim() || !playing.length}>Send</button></div>
+            {sentNote && <span className="small muted" role="status">{sentNote}</span>}
+          </form>
           <p className="small muted" style={{ margin: 0 }}>The chat has no timer: a table finishes when everyone accepts its plan. People alone or in pairs move to another table first; anyone left plays with labeled AI players. {room && `Scenario: ${room.task === 'mixed' ? 'a different one for each table' : room.task}. AI: ${room.aiMode === 'compare' ? 'tables alternate listening and answer-only' : room.aiMode === 'ask' ? 'answer-only' : 'listening'}.`}</p>
         </section>
       </div>
@@ -74,8 +85,12 @@ export default function Host() {
       {!list.length && <div className="card muted">No one has joined yet. Show the QR code; each person is seated at a table the moment they join.</div>}
       <div className="grid-tables">{list.map((t) => <TableCard key={t.id} t={t} code={code} act={act} />)}</div>
       <section className="card stack">
+        <div className="row between wrap-row">
+          <div><div className="label">After the session</div><strong>Analytics for this session</strong><div className="small muted">Plans, limits, participation, what the AI did, feedback, and a transcript of every table. It updates as tables finish and stays available later.</div></div>
+          <Link className="btn" to={`/analytics/${code}`}>Open analytics</Link>
+        </div>
         <div className="label">Download data (CSV)</div>
-        <div className="row wrap-row" style={{ gap: 14 }}>{['logs.csv', 'players.csv', 'sessions.csv', 'feedback.csv'].map((f) => <a key={f} href={exp(f)}>{f}</a>)}</div>
+        <div className="row wrap-row" style={{ gap: 14 }}>{['tables.csv', 'participants.csv', 'logs.csv', 'feedback.csv', 'sessions.csv', 'players.csv'].map((f) => <a key={f} href={exp(f)}>{f}</a>)}</div>
         <p className="small muted" style={{ margin: 0 }}>Codes only, no names or emails.</p>
       </section>
       {present && (
@@ -133,7 +148,7 @@ function TableCard({ t, code, act }) {
           </div>
         ))}
       </div>
-      <div className="host-chat">{t.chat.map((m) => <div key={m.id} className={`hc ${m.kind}`}><b>{m.name}{m.to ? ` to ${m.to} (private)` : ''}:</b> {m.text}</div>)}</div>
+      <div className="host-chat">{t.chat.map((m) => <div key={m.id} className={`hc ${m.kind}`}><b>{m.name}{m.to ? (m.from === 'AI' ? ` to ${m.to}` : ' to the AI') : ''}:</b> {m.to ? <i>{m.text}</i> : m.text}</div>)}</div>
       {t.pendingQuestions.length > 0 && <div className="error small">Waiting for the AI to answer: {t.pendingQuestions.map((p) => `${p.name}: "${p.text}"`).join(' | ')}</div>}
       <div className="row wrap-row">
         {t.stage === 'setup' && <button className="btn small ghost" onClick={() => send('host:advance')}>Open the chat now</button>}

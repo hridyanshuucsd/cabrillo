@@ -1,0 +1,48 @@
+// Talks to a deployed copy with one simulated person at a table with two AI players, and prints what the AI and the AI
+// players actually say (this is the only way to see the real model's wording, since the key lives on the server).
+// Run: node tests/live-ai.mjs https://your-app.onrender.com   (creates one test host account and one class session)
+import { io } from 'socket.io-client';
+const BASE = process.argv[2] || 'https://cabrillo.onrender.com';
+const ck = (r) => r.headers.get('set-cookie')?.split(';')[0];
+const post = (p, b, c) => fetch(BASE + p, { method: 'POST', headers: { 'content-type': 'application/json', ...(c ? { cookie: c } : {}) }, body: JSON.stringify(b) });
+const emit = (s, e, p) => new Promise((r) => s.emit(e, p, (x) => r(x || {})));
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+console.log('health:', await (await fetch(BASE + '/api/health')).text());
+let r = await post('/api/signup', { email: `live${Date.now()}@cabrillo.test`, name: 'Live Check', password: 'live-check-password-1', consent: true });
+const hc = ck(r);
+r = await post('/api/rooms', { kind: 'class', task: process.argv[3] || 'outing', aiMode: 'listen', groupSize: 3 }, hc);
+const room = await r.json(); console.log('class session', room.code);
+const host = io(BASE, { transports: ['websocket'], extraHeaders: { cookie: hc } });
+await new Promise((res) => host.on('connect', res)); await emit(host, 'host:watch', { code: room.code });
+await emit(host, 'host:auto-start', { code: room.code, value: false });
+const c = ck(await post('/api/guest', { name: 'Maya', consent: true }));
+const s = io(BASE, { transports: ['websocket'], extraHeaders: { cookie: c } });
+let g = null; const seen = new Set();
+const show = () => { for (const m of g?.chat || []) { if (seen.has(m.id)) continue; seen.add(m.id);
+  const extra = [m.poll && `[options: ${m.poll}]`, m.blocks?.length && `[blocks: ${JSON.stringify(m.blocks)}]`, m.compare && `[compare: ${JSON.stringify(m.compare.items)}]`, m.kind === 'map' && '[map card]', m.kind === 'booking' && '[booking card]', m.kind === 'plan' && '[plan card]', m.to && '(only Maya sees this)'].filter(Boolean).join(' ');
+  console.log(`  ${String(Math.round(m.t / 1000)).padStart(4)}s  ${m.name}${m.kind === 'limit' ? ' (shared a limit)' : m.kind === 'question' ? ' (asked the AI)' : ''}: ${m.text} ${extra}`); } };
+s.on('game:start', ({ sessionId }) => s.emit('game:join', { sessionId }));
+s.on('game:state', (x) => { g = x; show(); });
+await new Promise((res) => s.on('connect', res));
+const j = await emit(s, 'room:join', { code: room.code }); s.emit('game:join', { sessionId: j.sessionId });
+await wait(1500);
+await emit(host, 'host:start-table', { code: room.code, sessionId: j.sessionId });
+await wait(1500);
+console.log('my limit:', g.me.limit.text);
+s.emit('game:ready', { sessionId: g.id });
+await wait(2500);
+const say = async (t, ms = 14000) => { s.emit('game:chat', { sessionId: g.id, text: t }); await wait(ms); if (g.hearing) console.log('   AI HEARS:', g.hearing); };
+await wait(16000);
+await say('where should we meet guys?');
+await say('okay, what time tho?');
+await say('im down for whatever honestly, just not too expensive');
+await say('@ai pros and cons of the top two places?', 22000);
+await say('@AI what should we bring?', 18000);
+await say('@AI if we take an uber and it costs 26 dollars, what does each of us pay?', 18000);
+await say('ok lets lock this in', 12000);
+console.log('plan:', JSON.stringify(g.plan), 'panel:', g.panel.map((f) => `${f.name}=${f.leaderName || '-'}(${f.status})`).join(', '));
+const csv = await (await fetch(`${BASE}/api/export/${room.code}/logs.csv`, { headers: { cookie: hc } })).text();
+const src = {}; for (const m of csv.matchAll(/""source"":""([^"]+)""/g)) src[m[1]] = (src[m[1]] || 0) + 1;
+console.log('answers came from:', JSON.stringify(src));
+await emit(host, 'host:end-all', { code: room.code });
+s.close(); host.close(); process.exit(0);

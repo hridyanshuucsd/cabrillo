@@ -9,3 +9,4 @@ test-shots
 .mobiledb/
 .cardsdb/
 .aidb/
+.analyticsdb/

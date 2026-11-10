@@ -26,14 +26,31 @@ export function detectOptions(task, text) {
   return found.sort((a, b) => a.at - b.at);
 }
 
+// A message can name an option without asking for it: "if we take an uber, what does each of us pay?" or
+// "is Old Town far?". Those do not count as a wish. A proposal phrased as a question does: "how about Old Town?",
+// "should we take the bus?", or a bare "Old Town?".
+const PROPOSAL = /\b(how about|what about|what if|should we|shall we|can we|could we|why don't we|why dont we|why not|let's|lets|let us|wanna|want to|maybe|i vote|i say|i'm thinking|im thinking|i am thinking|down for|i'd go|id go|i would go|i prefer|i'd prefer|i like|i love|we could|we should)\b/;
+export function statesWish(text) {
+  const s = String(text).toLowerCase().trim();
+  const proposal = PROPOSAL.test(s);
+  if (/^(if|suppose|assuming|say we)\b/.test(s) && !proposal) return false;
+  if (!isQuestion(s)) return true;
+  if (proposal) return true;
+  const words = s.replace(/[^a-z0-9$' ]/g, ' ').trim().split(/\s+/);
+  return words.length <= 4 && !/^(is|are|does|do|did|how|what|where|when|which|who|can|could|would|will|any|anyone)$/.test(words[0]);
+}
+
 // prefs: { pcode: { field: option } }. Updates in place and returns what changed.
 export function applyMessage(task, prefs, pcode, text) {
   const mine = prefs[pcode] || (prefs[pcode] = {});
   const changes = [];
+  const wish = statesWish(text);
   for (const m of detectOptions(task, text)) {
     if (m.negative) {
       if (mine[m.field] === m.option) { delete mine[m.field]; changes.push({ ...m, kind: 'dropped' }); }
       else changes.push({ ...m, kind: 'rejected' });
+    } else if (!wish) {
+      changes.push({ ...m, kind: 'asked_about' }); // named in a question or a what-if: noted, not counted
     } else if (mine[m.field] !== m.option) {
       mine[m.field] = m.option; changes.push({ ...m, kind: 'supports' });
     }

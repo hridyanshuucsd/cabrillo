@@ -67,13 +67,15 @@ function student(i) {
             if (k === 1 && i % 3 === 0) send('game:share', { mode: i % 2 ? 'named' : 'anon' });
             if (k === 1 && i % 3 === 1) send('game:chat', { text: 'Here is my limit in my own words', limit: true });
             if (k === 2 && i % 7 === 0) send('game:chat', { text: '@AI what have we decided so far?' });
+            if (k === 2 && i % 5 === 0) send('game:ask', { text: 'what have we decided so far?', private: true });
+            const mt = g.chat.find((m) => m.sup && m.from !== g.me.pcode); if (k === 1 && i % 4 === 0 && mt) send('game:metoo', { msgId: mt.id });
             if (k === 3 && i % 11 === 0 && g.task.fields.some((x) => x.id === 'where')) send('game:chat', { text: 'can you book an uber for us' });
           }
           st.converge = true; // after talking, go along with whatever has the most support
         })();
       }
       if (g.stage === 'chat' && !g.deal) {
-        for (const b of g.bookings) if (b.status === 'pending' && b.mine === null) send('game:booking', { bookingId: b.id, value: Math.random() < 0.85 });
+        for (const b of g.bookings) if (b.status === 'asking' && b.mine === null) send('game:booking-answer', { bookingId: b.id, ok: b.options.filter(() => Math.random() < 0.8).map((o) => o.id) });
         if (st.converge) {
           for (const f of g.panel) {
             if (f.status === 'agreed') continue;
@@ -85,7 +87,7 @@ function student(i) {
       }
       if (g.stage === 'done' && !st.feedback) {
         st.feedback = true;
-        post('/api/feedback', { sessionId: g.id, aiHelpful: 1 + Math.floor(Math.random() * 5), aiAmount: 'about_right', playAgain: 'yes' }, cookie);
+        post('/api/feedback', { sessionId: g.id, aiHelpful: 1 + Math.floor(Math.random() * 5), aiAmount: 'about_right', planOk: 1 + Math.floor(Math.random() * 5), comfort: 1 + Math.floor(Math.random() * 5), inCharge: 1 + Math.floor(Math.random() * 5), playAgain: 'yes' }, cookie);
       }
       if (g.stage === 'done') st.done = true;
     });
@@ -164,11 +166,38 @@ for (const f of ['sessions.csv', 'players.csv', 'logs.csv', 'feedback.csv']) {
   check(`export ${f}`, r.ok && rows >= want, `(${rows} rows)`);
 }
 const logsCsv = await (await fetch(`${BASE}/api/export/${room.code}/logs.csv`, { headers: { cookie: hostCookie } })).text();
-const want = ['limit_changed', 'limit_shared', 'pick', 'plan_update', 'plan_complete', 'vote', 'deal_locked', 'session_outcome', 'limit_alert_private'];
+const want = ['limit_changed', 'limit_shared', 'pick', 'plan_update', 'plan_complete', 'vote', 'deal_locked', 'session_outcome', 'player_outcome', 'limit_alert_private', 'question_asked'];
 check('the new flow is in the research logs', want.every((e) => logsCsv.includes(e)), want.filter((e) => !logsCsv.includes(e)).join(', '));
 const sessionsCsv = await (await fetch(`${BASE}/api/export/${room.code}/sessions.csv`, { headers: { cookie: hostCookie } })).text();
 const playersCsv = await (await fetch(`${BASE}/api/export/${room.code}/players.csv`, { headers: { cookie: hostCookie } })).text();
 check('players.csv has no names', !/Student\d/.test(playersCsv) && !/Student\d/.test(sessionsCsv));
+
+// ---------- analytics, computed from the saved logs ----------
+const an = await (await fetch(`${BASE}/api/analytics/${room.code}`, { headers: { cookie: hostCookie } })).json();
+check('analytics count every finished table and every person', an.all.tables === all.length && an.all.people === students.length, `(${an.all.tables} tables, ${an.all.people} people)`);
+check('analytics agree with the host console on plans locked', an.all.plans_locked === deals, `(${an.all.plans_locked})`);
+check('analytics split the tables by AI mode', an.modes.listen.tables + an.modes.ask.tables === all.length && Math.abs(an.modes.listen.tables - an.modes.ask.tables) <= 1, `(${an.modes.listen.tables} listening, ${an.modes.ask.tables} answer-only)`);
+check('every person has exactly one limit outcome', Object.values(an.all.limit_ways).reduce((x, y) => x + y, 0) === an.all.people, JSON.stringify(an.all.limit_ways));
+check('analytics count the feedback forms', an.all.feedback_n >= students.length - 2, `(${an.all.feedback_n})`);
+check('time to plan is recorded for every locked table', an.tables.filter((t) => t.outcome === 'plan locked').every((t) => t.time_to_plan_s > 0));
+const tcsv = await (await fetch(`${BASE}/api/export/${room.code}/tables.csv`, { headers: { cookie: hostCookie } })).text();
+const pcsv = await (await fetch(`${BASE}/api/export/${room.code}/participants.csv`, { headers: { cookie: hostCookie } })).text();
+check('tables.csv and participants.csv have one row per table and per person', tcsv.trim().split('\n').length - 1 === all.length && pcsv.trim().split('\n').length - 1 === students.length && !/Student\d/.test(tcsv + pcsv));
+if (process.env.SHOTS) { // a picture of the analytics page for a full class: SHOTS=1 node tests/load.mjs
+  const { createRequire } = await import('node:module');
+  const { chromium, devices } = createRequire(import.meta.url)('playwright');
+  const fs = await import('node:fs'); fs.mkdirSync('test-shots/analytics', { recursive: true });
+  const browser = await chromium.launch();
+  const [name, value] = hostCookie.split('=');
+  for (const [label, opts] of [['laptop', { viewport: { width: 1280, height: 900 }, deviceScaleFactor: 2 }], ['phone', { ...devices['iPhone 14'] }]]) {
+    const ctx = await browser.newContext(opts); await ctx.addCookies([{ name, value, url: BASE }]);
+    const page = await ctx.newPage(); await page.goto(`${BASE}/analytics/${room.code}`);
+    await page.getByText('Every table').waitFor({ timeout: 10000 });
+    await page.screenshot({ path: `test-shots/analytics/class_${label}.png`, fullPage: true });
+    await ctx.close();
+  }
+  await browser.close();
+}
 console.log(`\n${all.length} tables, ${students.length} students, ${Math.round((Date.now() - t0) / 1000)} s. Messages sent: ${students.reduce((a, s) => a + s.sent, 0)}. States received: ${students.reduce((a, s) => a + s.states, 0)}.`);
 
 students.forEach((s) => s.s.close()); host.close();

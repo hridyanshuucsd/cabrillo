@@ -13,15 +13,15 @@ export default function About() {
         <p className="small">{CONSENT}</p>
         <ul className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
           <li>What happens in a session: plan choices, accepts, limits shared, AI messages, and timing.</li>
-          <li>Chat messages and questions to the AI, stored under a player code.</li>
-          <li>Your optional answers to the two questions after a game.</li>
+          <li>Chat messages and questions to the AI, stored under a player code. This includes questions you ask the AI privately and your private answers about a ride or a table: other players never see them, but the research team does, under your code.</li>
+          <li>Your optional answers to the short questions after a session.</li>
           <li>For accounts only: your email and display name, used to sign in and show your history. Passwords are stored as secure hashes.</li>
         </ul>
         <p className="small muted" style={{ margin: 0 }}>Exports for analysis contain player codes, never names or emails. Data is used only for this course project.</p>
       </div>
       <div className="card stack">
         <h2>The AI</h2>
-        <p className="small" style={{ margin: 0 }}>The AI is always labeled. At most tables it reads the chat, keeps the plan above the chat up to date, and asks at most two questions of its own; at some class tables it only answers when asked, so we can compare the two. Your private limit is not sent to the AI model. It reaches the group only if you say it or ask the AI to pass it on, with or without your name. The AI cannot vote. Anyone at the table can pause it. During class tests, a teammate may speak for it.</p>
+        <p className="small" style={{ margin: 0 }}>The AI is always labeled. At most tables it reads the chat, keeps the plan above the chat up to date, and asks at most two questions of its own; at some class tables it only answers when asked, so we can compare the two. You can ask it anything, in the group or privately. Your private limit is not sent to the AI model unless you type it yourself. It reaches the group only if you say it or ask the AI to pass it on, with or without your name. When the group books a ride or a table (a demo; nothing is charged), each person tells the AI privately which options work, and the group sees only the result. The AI cannot vote. Anyone at the table can pause it. During class tests, a teammate may speak for it.</p>
       </div>
       <p className="small muted">The tasks use real San Diego place names, but every limit, price, and time in a session is invented for play.</p>
       <Link to="/" className="btn">Back</Link>

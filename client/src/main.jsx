@@ -12,6 +12,7 @@ import Host from './pages/Host.jsx';
 import History from './pages/History.jsx';
 import About from './pages/About.jsx';
 import Join from './pages/Join.jsx';
+import Analytics from './pages/Analytics.jsx';
 
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
         <Route path="/quick" element={<Need><Room quick /></Need>} />
         <Route path="/play/:id" element={<Need><Game /></Need>} />
         <Route path="/host/:code" element={<Need><Host /></Need>} />
+        <Route path="/analytics/:code" element={<Need><Analytics /></Need>} />
         <Route path="/history" element={<Need><History /></Need>} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

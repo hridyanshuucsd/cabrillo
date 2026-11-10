@@ -65,6 +65,55 @@ function ridePhase(b, now) {
   return { step: 'arrived', car: { lat: b.place.lat, lng: b.place.lng, bearing: 0 } };
 }
 
+// The private part of a ride or table card. Whether to book is decided in the group; which ride (or which time) works
+// for you is between you and the AI. The group sees how many people have answered and the result, never who said what.
+function PrivateAnswer({ b, send }) {
+  const ride = b.kind === 'ride';
+  const [sel, setSel] = useState(() => new Set(b.mine || []));
+  const [editing, setEditing] = useState(b.mine === null);
+  useEffect(() => { if (b.mine === null) setEditing(true); }, [b.mine === null]);
+  const toggle = (id) => setSel((x) => { const n = new Set(x); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const submit = (ids) => { send('game:booking-answer', { bookingId: b.id, ok: ids }); setEditing(false); };
+  const name = (id) => b.options.find((o) => o.id === id)?.name;
+  if (!editing) return (
+    <div className="private-box">
+      <span className="only-you">Only you see this</span>
+      <span>{b.mine?.length ? <>You said these work for you: <strong>{b.mine.map(name).join(', ')}</strong>.</> : <>You said <strong>none of these</strong> work for you.</>}</span>
+      <button className="linkbtn" style={{ alignSelf: 'flex-start', padding: '2px 0' }} onClick={() => { setSel(new Set(b.mine || [])); setEditing(true); }}>Change my answer</button>
+    </div>
+  );
+  return (
+    <div className="private-box">
+      <span className="only-you">Only you see this</span>
+      <strong>{ride ? 'Which rides work for you?' : 'Which times work for you?'}</strong>
+      <span className="small muted">Tap every one you are fine with. The group sees only the result, never who said what.</span>
+      {ride ? (
+        <div className="ride-opts" role="group" aria-label="Rides that work for you">
+          {b.options.map((o) => (
+            <button key={o.id} role="checkbox" aria-checked={sel.has(o.id)} className={`ride-opt ${sel.has(o.id) ? 'on' : ''}`} onClick={() => toggle(o.id)}>
+              <CarIcon />
+              <span className="grow"><strong>{o.name}</strong> <span className="small muted">· {o.seats} seats{o.cars > 1 ? ` · ${o.cars} cars` : ''}</span><br /><span className="small muted">{o.note} · {o.pickupMin} min away</span>
+                {o.over?.length > 0 && <><br /><span className="opt-warn">Above the spending limit {o.over.join(', ')} shared</span></>}</span>
+              <span className="ride-price"><strong>{money(o.perPerson)} each</strong><br /><span className="small muted">{money(o.total)} total</span></span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <>
+          <div className="slots" role="group" aria-label="Times that work for you">{b.options.map((o) => <button key={o.id} role="checkbox" aria-checked={sel.has(o.id)} className={sel.has(o.id) ? 'on' : ''} onClick={() => toggle(o.id)}>{o.name}</button>)}</div>
+          <span className="small">About {money(b.perPerson)} per person.{b.options[0]?.over?.length > 0 && <span className="opt-warn"> Above the spending limit {b.options[0].over.join(', ')} shared.</span>}</span>
+        </>
+      )}
+      <div className="row wrap-row" style={{ gap: 8 }}>
+        <button className="btn small grow" disabled={!sel.size} onClick={() => submit([...sel])}>{sel.size ? 'Send my answer' : 'Tap what works'}</button>
+        <button className="btn ghost small" onClick={() => submit([])}>None work for me</button>
+      </div>
+    </div>
+  );
+}
+const Progress = ({ b }) => <div className="small muted">{b.answered} of {b.of} answered. {b.kind === 'ride' ? 'I book the cheapest ride that works for everyone.' : 'I hold the earliest time that works for everyone.'}</div>;
+const statusChip = (b, done) => <span className={`chip ${b.status === 'booked' ? 'ok' : b.status === 'none' ? 'warn' : ''}`}>{b.status === 'asking' ? 'Asking each person' : b.status === 'booked' ? done : 'Not booked'}</span>;
+
 export function RideCard({ b, send, offset }) {
   const [full, setFull] = useState(false);
   const now = useNow(b?.status === 'booked', offset || 0);
@@ -75,7 +124,7 @@ export function RideCard({ b, send, offset }) {
   const car = ph?.car || null;
   const mapProps = { points: pts, route: b.route, car };
   return (
-    <div className="card-ai ride" role="group" aria-label={`Ride to ${b.place.name}`}>
+    <div className="card-ai ride" id={`booking-${b.id}`} role="group" aria-label={`Ride to ${b.place.name}`}>
       <button className="map-tap" onClick={() => setFull(true)} aria-label="Open the ride map full screen">
         <MapView {...mapProps} height={170} />
         <span className="map-hint">{ph ? 'Live demo' : 'Tap to open'}</span>
@@ -84,24 +133,10 @@ export function RideCard({ b, send, offset }) {
         {b.auto && <div className="why">The AI added this because the plan says rideshare.</div>}
         <div className="row between" style={{ alignItems: 'flex-start' }}>
           <div><strong className="ride-title">Ride to {b.place.name}</strong><div className="small muted">From {b.origin.name} · {b.miles} mi · about {b.minutes} min</div></div>
-          <span className={`chip ${b.status === 'booked' ? 'ok' : b.status === 'declined' ? 'warn' : ''}`}>{b.status === 'pending' ? 'Waiting for everyone' : b.status === 'booked' ? 'Booked (demo)' : 'Not booked'}</span>
+          {statusChip(b, 'Booked (demo)')}
         </div>
 
-        {b.status === 'pending' && (
-          <>
-            <div className="ride-opts" role="radiogroup" aria-label="Car type">
-              {b.options.map((o) => (
-                <button key={o.id} role="radio" aria-checked={o.id === b.choice} className={`ride-opt ${o.id === b.choice ? 'on' : ''}`} onClick={() => o.id !== b.choice && send('game:booking-option', { bookingId: b.id, option: o.id })}>
-                  <CarIcon />
-                  <span className="grow"><strong>{o.name}</strong> <span className="small muted">· {o.seats} seats{o.cars > 1 ? ` · ${o.cars} cars` : ''}</span><br /><span className="small muted">{o.note} · {o.pickupMin} min away</span></span>
-                  <span className="ride-price"><strong>{money(o.total)}</strong><br /><span className="small muted">{money(o.perPerson)} each</span></span>
-                </button>
-              ))}
-            </div>
-            {b.warn && <div className="warnline">{b.warn}</div>}
-            <Approve b={b} send={send} what={`${opt.name}, ${money(opt.perPerson)} each`} />
-          </>
-        )}
+        {b.status === 'asking' && <><PrivateAnswer b={b} send={send} /><Progress b={b} /></>}
 
         {b.status === 'booked' && ph && (
           <div className="ride-live" aria-live="polite">
@@ -117,10 +152,10 @@ export function RideCard({ b, send, offset }) {
                 </div>
               </>
             )}
-            <div className="small muted">{opt.name} · {money(b.total)} total · {money(b.perPerson)} each, payment requests sent. Confirmation {b.code}.</div>
+            <div className="small muted">{opt.name}, the cheapest ride that works for everyone · {money(b.total)} total · {money(b.perPerson)} each. Confirmation {b.code}.</div>
           </div>
         )}
-        {b.status === 'declined' && <div className="small muted">Someone said the price does not work, so nothing was booked. Ask again for a cheaper option.</div>}
+        {b.status === 'none' && <div className="small muted">No ride works for everyone, so nothing was booked. Nobody's answer is shown. Talk it over and ask again, or pick another way to get there.</div>}
         <div className="row between">
           <a className="small" href={gmapsDirections(b.origin, b.place)} target="_blank" rel="noreferrer">Open the route in Google Maps</a>
           <span className="tiny muted">Demo · nothing is charged</span>
@@ -137,45 +172,23 @@ export function TableCard({ b, send }) {
   if (!b) return null;
   const pts = [{ ...b.place, kind: 'place', label: '', active: true }];
   return (
-    <div className="card-ai table" role="group" aria-label={`Booking: ${b.title}`}>
+    <div className="card-ai table" id={`booking-${b.id}`} role="group" aria-label={`Booking: ${b.title}`}>
       <button className="map-tap" onClick={() => setFull(true)} aria-label="Open the map full screen"><MapView points={pts} height={130} /><span className="map-hint">Tap to open</span></button>
       <div className="card-ai-body">
         {b.auto && <div className="why">The AI added this because you picked a place and a time.</div>}
         <div className="row between" style={{ alignItems: 'flex-start' }}>
           <div><strong className="ride-title">{b.restaurant}</strong><div className="small muted">Near {b.place.name} · table for {b.n}</div></div>
-          <span className={`chip ${b.status === 'booked' ? 'ok' : b.status === 'declined' ? 'warn' : ''}`}>{b.status === 'pending' ? 'Waiting for everyone' : b.status === 'booked' ? 'Reserved (demo)' : 'Not booked'}</span>
+          {statusChip(b, 'Reserved (demo)')}
         </div>
-        {b.status === 'pending' && (
-          <>
-            <div className="small muted">Pick a time</div>
-            <div className="slots" role="radiogroup" aria-label="Time">{b.slots.map((s) => <button key={s} role="radio" aria-checked={s === b.slot} className={s === b.slot ? 'on' : ''} onClick={() => s !== b.slot && send('game:booking-option', { bookingId: b.id, option: s })}>{s}</button>)}</div>
-            <div className="row between"><span className="small">About {money(b.per)} per person</span><strong>{money(b.total)} total</strong></div>
-            {b.warn && <div className="warnline">{b.warn}</div>}
-            <Approve b={b} send={send} what={`${b.slot}, ${money(b.perPerson)} each`} />
-          </>
-        )}
-        {b.status === 'booked' && <div className="reserved"><strong>Reserved for {b.n} · {b.slot}</strong><span className="small">Confirmation {b.code} · {money(b.perPerson)} each, payment requests sent.</span></div>}
-        {b.status === 'declined' && <div className="small muted">Someone said the price does not work, so nothing was booked.</div>}
+        {b.status === 'asking' && <><PrivateAnswer b={b} send={send} /><Progress b={b} /></>}
+        {b.status === 'booked' && <div className="reserved"><strong>Reserved for {b.n} · {b.slot}</strong><span className="small">The earliest time that works for everyone. Confirmation {b.code} · about {money(b.perPerson)} each.</span></div>}
+        {b.status === 'none' && <div className="small muted">No time works for everyone, so nothing was reserved. Nobody's answer is shown.</div>}
         <div className="row between">
           <a className="small" href={gmapsPlace(b.place, b.restaurant)} target="_blank" rel="noreferrer">Find it in Google Maps</a>
           <span className="tiny muted">Demo · nothing is charged</span>
         </div>
       </div>
       {full && <FullMap title={b.restaurant} points={pts} onClose={() => setFull(false)} />}
-    </div>
-  );
-}
-
-function Approve({ b, send, what }) {
-  return (
-    <div className="stack" style={{ gap: 6 }}>
-      {b.mine === null
-        ? <div className="row" style={{ gap: 8 }}>
-            <button className="btn small grow" onClick={() => send('game:booking', { bookingId: b.id, value: true })}>Price looks right</button>
-            <button className="btn ghost small grow" onClick={() => send('game:booking', { bookingId: b.id, value: false })}>Not for me</button>
-          </div>
-        : <div className="small">You approved {what}.</div>}
-      <div className="small muted">Approved: {b.approved.length ? b.approved.join(', ') : 'nobody yet'}{b.waiting.length ? ` · Waiting for: ${b.waiting.join(', ')}` : ''}. Changing the car or time asks everyone again.</div>
     </div>
   );
 }

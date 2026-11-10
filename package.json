@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Cabrillo: a 10 minute multiplayer role-play for deciding how to use a campus space. Team 19, COGS 123.",
+  "description": "Cabrillo: a group planning chat for 3 to 5 people with a clearly labeled AI that listens. Team 19, COGS 123.",
   "engines": {
     "node": ">=20"
   },
@@ -11,7 +11,9 @@
     "dev": "node scripts/dev.js",
     "build": "vite build",
     "start": "node server/index.js",
-    "test:e2e": "node tests/e2e.mjs"
+    "test:e2e": "node tests/e2e.mjs",
+    "test": "node tests/unit.mjs && node tests/scenarios.mjs",
+    "test:all": "npm run build && node tests/unit.mjs && node tests/scenarios.mjs && node tests/e2e.mjs && node tests/mobile.mjs && node tests/cards.mjs && node tests/aiplayers.mjs && node tests/analytics.mjs && node tests/load.mjs 75"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

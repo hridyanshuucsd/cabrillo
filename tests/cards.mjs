@@ -1,5 +1,5 @@
 // Map, ride and table cards on phones: the AI adds a map when two places are compared and prices a ride when the plan
-// says rideshare; the group switches the car type, watches the ride play out on the map, and asks for a table. Screenshots go to test-shots/cards/. Run: npm run build && node tests/cards.mjs
+// says rideshare; each person answers privately which rides work, the group watches the ride play out on the map, and asks for a table. Screenshots go to test-shots/cards/. Run: npm run build && node tests/cards.mjs
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -75,12 +75,25 @@ try {
   await a.waitForTimeout(1500);
   await a.getByRole('group', { name: 'Ride to Old Town' }).scrollIntoViewIfNeeded();
   await a.screenshot({ path: `${DIR}/03_ride_options.png` });
-  check('three car types with prices', (await a.getByRole('radio').count()) === 3);
-  await a.getByRole('button', { name: 'Price looks right' }).click();
-  await c.getByRole('radio', { name: /^XL/ }).click();
-  check('switching the car type asks everyone again', await wait(a.getByRole('button', { name: 'Price looks right' }), 4000));
-  for (const p of ps) await p.getByRole('button', { name: 'Price looks right' }).click();
-  check('the ride is booked when everyone approves', await wait(a.getByText('Booked (demo)').first()));
+  const ride = (p) => p.getByRole('group', { name: 'Ride to Old Town' });
+  check('three car types with prices, answered privately', (await ride(a).getByRole('checkbox').count()) === 3 && (await ride(a).getByText('Only you see this').count()) === 1);
+  // each person says privately which rides work; one person changes their mind before the result
+  await ride(a).getByRole('checkbox', { name: /^XL/ }).click();
+  await ride(a).getByRole('button', { name: 'Send my answer' }).click();
+  await ride(b).getByText('1 of 3 answered').waitFor({ timeout: 4000 });
+  check('others see only how many people answered', !(await ride(b).getByText(/You said/).count()) && !/Maya (said|picked|chose|answered|is fine with)[^.]*XL/.test(await b.locator('body').innerText()));
+  await ride(a).getByRole('button', { name: 'Change my answer' }).click();
+  await ride(a).getByRole('checkbox', { name: /^XL/ }).click();
+  await ride(a).getByRole('checkbox', { name: /^Standard/ }).click();
+  await ride(a).getByRole('checkbox', { name: /^Green/ }).click();
+  await ride(a).getByRole('button', { name: 'Send my answer' }).click();
+  check('a person can change their private answer before the result', await wait(ride(a).getByText(/You said these work for you: Standard, Green/), 4000));
+  await a.screenshot({ path: `${DIR}/03b_ride_private_answer.png` });
+  await ride(b).getByRole('checkbox', { name: /^Standard/ }).click(); await ride(b).getByRole('checkbox', { name: /^XL/ }).click();
+  await ride(b).getByRole('button', { name: 'Send my answer' }).click();
+  for (const o of [/^Standard/, /^XL/, /^Green/]) await ride(c).getByRole('checkbox', { name: o }).click();
+  await ride(c).getByRole('button', { name: 'Send my answer' }).click();
+  check('the AI books the cheapest ride that works for everyone', await wait(a.getByText(/Standard is the cheapest ride that works for everyone/).first()) && await wait(a.getByText('Booked (demo)').first()));
   check('a driver is found', await wait(a.getByText(/is arriving in/), 6000));
   await a.waitForTimeout(800);
   await a.getByRole('group', { name: 'Ride to Old Town' }).scrollIntoViewIfNeeded();
@@ -93,18 +106,20 @@ try {
 
   await say(c, 'can we also reserve a table for lunch');
   check('asking for a table posts a table card', await wait(a.getByRole('group', { name: /Booking: Table for 3/ })));
-  await b.getByRole('radio').nth(2).click();
+  const tbl = (p) => p.getByRole('group', { name: /Booking: Table for 3/ });
   await a.waitForTimeout(1200);
-  await a.getByRole('group', { name: /Booking: Table for 3/ }).scrollIntoViewIfNeeded();
+  await tbl(a).scrollIntoViewIfNeeded();
   await a.screenshot({ path: `${DIR}/06_table_card.png` });
-  for (const p of ps) await p.getByRole('button', { name: 'Price looks right' }).click();
-  check('the table is reserved', await wait(a.getByText(/Reserved for 3/)));
+  // a: the first two times; b: the last two; c: all three. The earliest time that works for everyone is the second.
+  const times = await tbl(a).getByRole('checkbox').allInnerTexts();
+  for (const [p, idx] of [[a, [0, 1]], [b, [1, 2]], [c, [0, 1, 2]]]) { for (const i of idx) await tbl(p).getByRole('checkbox').nth(i).click(); await tbl(p).getByRole('button', { name: 'Send my answer' }).click(); }
+  check('the table is reserved at the earliest time that works for everyone', await wait(a.getByText(`Reserved for 3 · ${times[1]}`)), times[1]);
   await a.getByRole('group', { name: /Booking: Table for 3/ }).scrollIntoViewIfNeeded();
   await a.screenshot({ path: `${DIR}/07_table_reserved.png` });
   const sideways = await a.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
   check('no sideways scrolling with the cards', !sideways);
   const logs = await (await fetch(`${BASE}/api/export/${code}/logs.csv`, { headers: { cookie: (await host.context().cookies()).map((x) => `${x.name}=${x.value}`).join('; ') } })).text();
-  check('map, car switch and bookings are logged', ['map_shown', 'booking_option', 'booking_proposed', 'booking_done'].every((e) => logs.includes(e)));
+  check('the map, private answers and bookings are logged', ['map_shown', 'booking_proposed', 'booking_answer', 'booking_done'].every((e) => logs.includes(e)));
 } catch (e) { console.error(e); results.push(false); }
 await browser.close(); server.kill(); await pg.stop();
 const failed = results.filter((x) => !x).length;
