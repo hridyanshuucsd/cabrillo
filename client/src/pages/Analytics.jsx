@@ -178,7 +178,7 @@ export default function Analytics() {
 
           <section className="card stack" aria-labelledby="cmp-h">
             <div className="row between wrap-row"><h2 id="cmp-h" style={{ margin: 0 }}>{modes.length > 1 ? 'Listening AI and answer-only AI, side by side' : 'The numbers'}</h2></div>
-            <p className="small muted" style={{ margin: 0 }}>{modes.length > 1 ? 'Tables alternated between the two. With this few tables, read differences as descriptive, not as proof; the CSV files below are ready for a statistics tool.' : 'Every table in this session used the same AI mode.'}</p>
+            <p className="small muted" style={{ margin: 0 }}>{modes.length > 1 ? `Tables were split evenly between the two as they were created (balanced, not random). With this few tables, read differences as descriptive, not as proof.${a.room.task === 'mixed' ? ' Each table also had its own scenario, so a difference between the columns can come from the scenarios as well as from the AI.' : ''} The CSV files below are ready for a statistics tool.` : 'Every table in this session used the same AI mode.'}</p>
             <div className="table-scroll">
               <table className="atable">
                 <thead><tr><th scope="col"><span className="sr-only">Measure</span></th>{modes.map((m) => <th key={m} scope="col">{a.mode_names[m]}</th>)}</tr></thead>

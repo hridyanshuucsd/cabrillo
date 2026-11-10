@@ -30,6 +30,7 @@ const MODES = { listen: 'Listening AI', ask: 'Answer-only AI' };
 // What each number means. Shown at the bottom of the analytics page and useful in a methods section.
 export const DEFINITIONS = [
   ['Table', 'One group chat. Only tables that started are counted. A table is "finished" when its results screen opened (a plan was locked, everyone asked to end, the host ended it, or the 40 minute backstop).'],
+  ['AI mode', 'Set per table when the table is created. In a "compare" session a new table gets whichever mode fewer tables have, so the two stay balanced; the assignment is not random. In a "different scenario for each table" session, the scenario also differs between tables.'],
   ['People', 'Human participants. Labeled AI players that filled empty seats are counted separately and are left out of every per-person number.'],
   ['Plan locked', 'Every person at the table accepted the same complete plan.'],
   ['Time to plan', 'Seconds from the moment the chat opened to the moment the plan locked. The median is over tables that locked a plan.'],
