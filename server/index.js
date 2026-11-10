@@ -1,3 +1,4 @@
+import './env.js'; // must stay first: later imports read settings when they load
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import http from 'node:http';
