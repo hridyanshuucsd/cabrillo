@@ -23,6 +23,7 @@ const money = (x) => `$${x.toFixed(2)}`;
 export function MapCard({ m }) {
   const [full, setFull] = useState(false);
   if (!m) return null;
+  if (m.kind === 'route') return <RouteCard m={m} />;
   const pts = [{ ...m.origin, kind: 'pickup' }, ...m.places.map((p, i) => ({ ...p, kind: 'place', label: i + 1, active: p.id === m.leader }))];
   return (
     <div className="card-ai mapcard" role="group" aria-label="Map of the options">
@@ -175,6 +176,52 @@ function Approve({ b, send, what }) {
           </div>
         : <div className="small">You approved {what}.</div>}
       <div className="small muted">Approved: {b.approved.length ? b.approved.join(', ') : 'nobody yet'}{b.waiting.length ? ` · Waiting for: ${b.waiting.join(', ')}` : ''}. Changing the car or time asks everyone again.</div>
+    </div>
+  );
+}
+
+// ---------- the way there (bus or car) ----------
+function RouteCard({ m }) {
+  const [full, setFull] = useState(false);
+  const transit = m.mode === 'transit';
+  const pts = [{ ...m.origin, kind: 'pickup' }, { ...m.place, kind: 'dropoff' }];
+  const title = `Getting to ${m.place.name}`;
+  return (
+    <div className="card-ai route" role="group" aria-label={title}>
+      <button className="map-tap" onClick={() => setFull(true)} aria-label="Open the route full screen"><MapView points={pts} route={m.route} height={150} /><span className="map-hint">Tap to open</span></button>
+      <div className="card-ai-body">
+        {m.auto && <div className="why">The AI added this because the plan has a place and says {transit ? 'bus or trolley' : 'carpool'}.</div>}
+        <div className="row between"><strong>{title}</strong><span className="chip">{transit ? 'Bus or trolley' : 'By car'}</span></div>
+        <div className="route-stats">
+          <div><span className="big">{m.minutes}</span><span className="small muted"> min{transit ? ', about' : ''}</span></div>
+          <div><span className="big">{m.miles}</span><span className="small muted"> mi</span></div>
+          <div className="small muted">from {m.origin.name}</div>
+        </div>
+        <a className="btn ghost block" href={gmapsDirections(m.origin, m.place, transit ? 'transit' : 'driving')} target="_blank" rel="noreferrer">{transit ? 'Bus and trolley times in Google Maps' : 'Directions in Google Maps'}</a>
+        <div className="tiny muted">{transit ? 'Bus times are a rough estimate; Google Maps has the live schedule.' : 'Drive time is an estimate.'}</div>
+      </div>
+      {full && <FullMap title={title} points={pts} route={m.route} onClose={() => setFull(false)} />}
+    </div>
+  );
+}
+
+// ---------- the complete plan, ready to accept ----------
+export function PlanCard({ g, m, onAccept }) {
+  const live = JSON.stringify(m.plan) === JSON.stringify(g.plan) && !g.deal;
+  const humans = g.players.filter((p) => !p.isAI);
+  const accepted = humans.filter((p) => p.accepted).length;
+  return (
+    <div className={`card-ai plancard ${live ? '' : 'stale'}`} role="group" aria-label={m.text}>
+      <div className="card-ai-body">
+        <div className="row between"><strong>{live ? 'The plan is ready' : 'An earlier plan'}</strong>{live && <span className="chip ok">{accepted} of {humans.length} accepted</span>}</div>
+        {g.task.fields.map((f) => (
+          <div key={f.id} className="plan-line"><span className="small muted">{f.name}</span><strong>{f.options.find((o) => o.id === m.plan[f.id])?.name}</strong></div>
+        ))}
+        {live
+          ? <><button className={`btn block ${g.me.accepted ? 'ghost' : ''}`} onClick={onAccept}>{g.me.accepted ? 'Take back my acceptance' : 'Accept this plan'}</button>
+              <div className="tiny muted">If it does not work for you, say so or change a pick. Any change clears every acceptance.</div></>
+          : <div className="tiny muted">The plan changed after this.</div>}
+      </div>
     </div>
   );
 }

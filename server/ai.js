@@ -110,3 +110,37 @@ export async function answerQuestion(question, ctx) {
 }
 
 export const aiMode = () => (process.env.ANTHROPIC_API_KEY ? 'anthropic' : process.env.OPENAI_API_KEY ? 'openai' : 'scripted');
+
+// ---------- AI players ----------
+// An AI player is a labeled seat filler that chats like a relaxed classmate. The model only writes the words and says
+// which options the player now wants; the app checks every pick against the player's limit before it counts.
+const PLAYER = `You are playing one member of a small college group chat. The others can see you are an AI player, so never claim to be human, but talk like a relaxed college student texting friends.
+Write ONE short message (at most 18 words). Casual: lowercase is fine, contractions are fine, "tbh", "ngl", "lol" are fine sometimes. No emojis, no em dashes, no hashtags. Vary your wording; never repeat a message you already sent.
+Reply to the newest message when there is one: answer a question if you can, react to an idea, or ask a short follow-up. Sound like a person, not a form ("sunday afternoon works, mornings i have practice" is good; "I would like Sunday afternoon for when" is bad).
+People are written as codes like P01 or A02. Do not invent names; you may refer to someone by their code.
+Stay consistent with what you want and with your limit. Only bring up your limit if it matters right now or someone asked about limits.
+Answer with JSON only: {"text": "...", "picks": {"<part id>": "<option id>"}, "mentions_limit": true or false}. "picks" lists only options your message says you want; use the ids given.`;
+
+export async function playerLine(ctx) {
+  try {
+    const t = ctx.task;
+    const parts = t.fields.map((f) => `- ${f.id} (${f.name}): ${f.options.map((o) => `${o.id} = ${o.name}`).join('; ')}`).join('\n');
+    const user = `Task: ${t.prompt}
+Parts of the plan, with option ids:
+${parts}
+You are ${ctx.me}. What you would like: ${ctx.wants || 'nothing in particular, you are easygoing'}.
+Your private limit: "${ctx.limit}". ${ctx.shared ? 'You already told the group about it.' : 'You have not told the group yet.'}
+${ctx.goingAlong ? `You are fine going along with: ${ctx.goingAlong}.` : ''}
+Plan so far: ${ctx.summary}
+Recent chat (newest last):
+${ctx.recent || '(nobody has said anything yet)'}
+${ctx.instruction}`;
+    const r = await chat(PLAYER, user, 120);
+    if (!r?.text) return null;
+    const m = r.text.match(/\{[\s\S]*\}/);
+    const j = JSON.parse(m ? m[0] : r.text);
+    const text = String(j.text || '').replace(/\s+/g, ' ').replace(/—|–/g, ', ').trim();
+    if (!text || text.length > 200) return null;
+    return { text, picks: j.picks && typeof j.picks === 'object' ? j.picks : {}, mentionsLimit: !!j.mentions_limit, source: r.source };
+  } catch (e) { console.error('AI player line failed:', e.message); return null; }
+}

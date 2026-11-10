@@ -1,8 +1,8 @@
 // The listening AI's reading of the chat. Rule based, so it works without any API key and is easy to explain:
 // it spots which plan options each person supports or rejects, and builds the shared "Plan so far".
 
-const NEG_BEFORE = /\b(not|no|never|cannot|can't|cant|don't|dont|won't|wont|hate|skip|instead of|rather than|without|except|against)\b[^.!?]{0,14}$/;
-const NEG_AFTER = /^[^.!?]{0,16}\b(is out|won't work|wont work|does not work|doesn't work|is bad|is too|no thanks|not for me)\b/;
+const NEG_BEFORE = /\b(not|no|never|cannot|can't|cant|don't|dont|won't|wont|hate|skip|instead of|rather than|without|except|against|busy|working|work|practice|class|shift|booked|allergic to|avoid)\b[^.!?]{0,14}$/;
+const NEG_AFTER = /^[^.!?]{0,16}\b(is out|are out|won't work|wont work|does not work|doesn't work|do not work|don't work|is bad|is too|no thanks|not for me|so not|not then|no good|is a no|can't make|cannot make|can't do|cannot do|won't be able|is not possible|isn't possible)\b/;
 
 // Returns every option mentioned in a message, with whether the mention is negative.
 export function detectOptions(task, text) {
@@ -65,5 +65,29 @@ export function findConflict(panel) {
   for (const f of panel) {
     if (f.options.length >= 2 && f.status !== 'agreed') return { field: f, a: f.options[0], b: f.options[1] };
   }
+  return null;
+}
+
+// Which part of the plan a message asks the group about, for example "what time tho?" asks about When.
+// Returns a field id or null. Only questions count: a statement that names a part is not a question about it.
+const TOPIC = [
+  [/\b(what time|which time|when|what day|which day|time|day|date)\b/, ['when', 'day', 'time', 'meet', 'start', 'lease', 'draft']],
+  [/\b(where|what place|which place|location|spot|area|meet up|meet)\b/, ['where', 'area', 'stay', 'show']],
+  [/\b(get there|getting there|how do we get|drive|ride|transport|travel|bus|car)\b/, ['travel', 'transport', 'ride', 'truck']],
+  [/\b(budget|cost|price|how much|spend|money|afford|pay|rent)\b/, ['budget', 'rent', 'payer', 'app', 'split']],
+  [/\b(eat|food|drink|snack|grocer|dinner|lunch|menu)\b/, ['food', 'main', 'drinks', 'snacks', 'groceries']],
+  [/\b(what should we do|what do we do|activity|which game|what game|which sport|what show|gift|project)\b/, ['what', 'game', 'sport', 'show', 'gift', 'idea']],
+];
+export function isQuestion(text) {
+  const s = String(text).toLowerCase().trim();
+  return s.includes('?') || /^(what|where|when|how|which|who|should|shall|any|thoughts|ideas|anyone|so what|ok what|okay what)\b/.test(s) || /\b(should we|thoughts\??$|any ideas|you guys think|y'all think)\b/.test(s);
+}
+export function topicOf(task, text) {
+  if (!isQuestion(text)) return null;
+  const s = ` ${String(text).toLowerCase()} `;
+  const ids = new Set(task.fields.map((f) => f.id));
+  // A field named in the question by its own name wins (for example "what about quiet hours?").
+  for (const f of task.fields) if (s.includes(f.name.toLowerCase())) return f.id;
+  for (const [re, fields] of TOPIC) if (re.test(s)) { const hit = fields.find((id) => ids.has(id)); if (hit) return hit; }
   return null;
 }

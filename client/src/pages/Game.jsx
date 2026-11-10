@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, emit, getSocket, msToClock, mmss, useCountdown, useSocketEvent } from '../lib.js';
 import TopBar from '../components/Brand.jsx';
-import { MapCard, RideCard, TableCard } from '../components/Cards.jsx';
+import { MapCard, RideCard, TableCard, PlanCard } from '../components/Cards.jsx';
 
 // The flow is three steps: Briefing (your table fills while you read the task and your private limit),
 // Chat (no timer; the plan locks when everyone accepts it), and Results.
@@ -220,7 +220,11 @@ function ChatScreen({ g, send, keyboard, typers }) {
         </div>
       </header>
       {!keyboard && <Board g={g} open={setSheet} />}
-      <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} />
+      <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} onAccept={() => {
+        if (g.me.accepted) return send('game:accept', { value: false });
+        if (g.me.limit.custom || g.me.limit.ok === false) return setSheet({ type: 'accept' });
+        send('game:accept', { value: true });
+      }} />
       {!keyboard && <BottomBar g={g} send={send} open={setSheet} humans={humans} />}
       <Composer g={g} send={send} draft={draft} />
 
@@ -269,11 +273,13 @@ function Options({ g, send, id, compact }) {
     <div className={`opts ${compact ? 'compact' : ''}`} role="group" aria-label={field.name}>
       {field.options.map((o) => {
         const names = who(o.id);
+        const no = row?.blocked?.[o.id] || [];
         return (
           <button key={o.id} className={`opt ${mine === o.id ? 'mine' : ''} ${row?.leader === o.id && row.status === 'agreed' ? 'lead' : ''}`} aria-pressed={mine === o.id} disabled={!!g.deal}
             onClick={() => send('game:pick', { field: id, option: mine === o.id ? '' : o.id })}>
             <span className="opt-name">{o.name}</span>
             {names.length > 0 && <span className="opt-who">{names.join(', ')}</span>}
+            {no.length > 0 && <span className="opt-warn">Does not work for {no.join(', ')}</span>}
             {mine === o.id && <span className="opt-check" aria-hidden="true">✓</span>}
           </button>
         );
@@ -436,7 +442,7 @@ function AcceptSheet({ g, send, onClose, open }) {
 }
 
 // ---------- messages and the message box ----------
-function Messages({ g, send, typers, sayMyself, share }) {
+function Messages({ g, send, typers, sayMyself, share, onAccept }) {
   const box = useRef(null);
   const atBottom = useRef(true);
   const [newBelow, setNewBelow] = useState(false);
@@ -444,7 +450,7 @@ function Messages({ g, send, typers, sayMyself, share }) {
   useLayoutEffect(() => {
     const el = box.current; if (!el) return;
     if (atBottom.current || last?.from === g.me.pcode) { el.scrollTop = el.scrollHeight; setNewBelow(false); } else setNewBelow(true);
-  }, [last?.id, g.bookings, typers.length]);
+  }, [last?.id, g.bookings, g.maps?.length, typers.length]);
   // keep the newest message in view when the keyboard opens and the list gets shorter
   useEffect(() => {
     const el = box.current; if (!el || !window.ResizeObserver) return;
@@ -462,11 +468,12 @@ function Messages({ g, send, typers, sayMyself, share }) {
             return b?.kind === 'ride' ? <RideCard key={m.id} b={b} send={send} offset={g.clockOffset} /> : <TableCard key={m.id} b={b} send={send} />;
           }
           if (m.kind === 'map') return <MapCard key={m.id} m={(g.maps || []).find((x) => x.id === m.mapId)} />;
+          if (m.kind === 'plan') return <PlanCard key={m.id} g={g} m={m} onAccept={onAccept} />;
           if (m.kind === 'system') return <div key={m.id} className="m-system">{m.text}</div>;
           if (m.kind === 'pick') return <div key={m.id} className="m-pick">{m.from === g.me.pcode ? m.text.replace(m.name, 'You').replace('their pick', 'your pick') : m.text}</div>;
           const prev = g.chat[i - 1];
           const mine = m.from === g.me.pcode;
-          const first = !prev || prev.from !== m.from || ['system', 'booking', 'map', 'pick'].includes(prev.kind) || m.kind !== prev.kind;
+          const first = !prev || prev.from !== m.from || ['system', 'booking', 'map', 'pick', 'plan'].includes(prev.kind) || m.kind !== prev.kind;
           const p = byCode[m.from];
           if (m.kind === 'ai' || m.kind === 'private') {
             return (

@@ -341,3 +341,14 @@ html.app-locked, html.app-locked body { position: fixed; inset: 0; overflow: hid
   .planbar { padding: 6px 0 6px 12px; }
   .pchip { padding: 3px 10px; }
 }
+
+/* ---------- cards the AI adds from the chat ---------- */
+.opt { flex-wrap: wrap; }
+.opt-warn { flex-basis: 100%; order: 5; font-size: 12px; font-weight: 700; color: var(--warn); margin-top: -2px; }
+.route-stats { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+.route-stats .big { font-size: 22px; font-weight: 800; }
+.plancard { border: 2px solid var(--primary); }
+.plancard.stale { border: 1.5px solid var(--line); opacity: .75; }
+.plan-line { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.plan-line:last-of-type { border-bottom: 0; }
+.plan-line strong { text-align: right; }

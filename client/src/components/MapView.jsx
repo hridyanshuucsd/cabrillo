@@ -89,7 +89,7 @@ export default function MapView({ points = [], route, car, height = 160, interac
 }
 
 // Google Maps links: no key needed. These open the real Google Maps app or site.
-export const gmapsDirections = (from, to) => `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lng}&destination=${to.lat},${to.lng}&travelmode=driving`;
+export const gmapsDirections = (from, to, mode = 'driving') => `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lng}&destination=${to.lat},${to.lng}&travelmode=${mode}`;
 export const gmapsPlace = (p, q) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q ? `${q} near ${p.lat},${p.lng}` : `${p.lat},${p.lng}`)}`;
 
 // Position along a route, from 0 (start) to 1 (end), with the heading in degrees.

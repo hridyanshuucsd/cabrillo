@@ -31,6 +31,7 @@ Team 19, COGS 123 (Social Computing), UC San Diego. Place names are real; every 
 The app works without any API key: the listening is rule based and answers are scripted. Optional keys:
 
 - `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`: a model answers @AI questions and rewrites the "AI hears" line (with an OpenAI key the app uses the newest "Terra" model, the balanced tier, and falls back to `gpt-5.6-terra`, `gpt-5.4-mini`, then `gpt-4o-mini` if a name is not accepted for the key; `AI_MODEL` pins one model). Chat messages are sent with player codes in place of names. Set `AI_SUMMARY=off` to keep the "AI hears" line rule based.
+- AI players (labeled seat fillers) use the same key to write their messages like a relaxed classmate and to reply to people; the app still checks every pick against their limit. Set `AI_PLAYERS=scripted` to use short scripted lines instead.
 - `MAPBOX_TOKEN` (a Mapbox public token): in-chat maps use Mapbox tiles and Mapbox Directions. Without it, maps use Esri's free tiles and routes use the public OSRM server.
 
 ## Run it on your computer
@@ -78,6 +79,7 @@ npm run build
 npm run test:e2e         # one host and six players play a class session in separate browsers; screenshots in test-shots/
 node tests/mobile.mjs    # every screen at phone sizes, including with the keyboard open
 node tests/cards.mjs     # the map, ride and table cards the AI adds
+node tests/aiplayers.mjs # a table with AI players: replies, the options card, the route card, the plan card
 node tests/load.mjs 75   # 75 simulated students play one class session at once (about 1 minute)
 node tests/scenarios.mjs # every scenario has a plan that respects all five limits
 node tests/smoke-remote.mjs https://your-app.onrender.com   # checks a deployed copy

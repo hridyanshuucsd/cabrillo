@@ -157,8 +157,8 @@ try {
   await shot(x, '08_pick_sheet');
   await x.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
   for (const [fl, op] of GOOD) { await tap(x, fl, op); await tap(y, fl, op); }
-  await x.getByText(/Every part of the plan has a choice: Old Town, Sunday afternoon, Bus or trolley, Under \$15/).first().waitFor({ timeout: 5000 });
-  check('the plan is what most of the table wants, and it is announced when complete', /Old Town, Sunday afternoon, Bus or trolley, Under \$15/.test(await body(x)));
+  await x.getByRole('group', { name: /Every part of the plan has a choice: Old Town, Sunday afternoon, Bus or trolley, Under \$15/ }).first().waitFor({ timeout: 5000 });
+  check('the plan is what most of the table wants, and a plan card appears when it is complete', (await x.getByRole('button', { name: 'Accept this plan' }).count()) >= 1);
 
   // pause, ask, book
   await y.getByRole('button', { name: 'The plan so far, details' }).click();

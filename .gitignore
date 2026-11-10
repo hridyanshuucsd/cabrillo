@@ -8,3 +8,4 @@ test-shots
 .loaddb/
 .mobiledb/
 .cardsdb/
+.aidb/
