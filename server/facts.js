@@ -6,90 +6,99 @@
 // Each value is a sentence in the second person, or { text, ...numbers the bill uses }. Values are dealt like
 // limits: shuffled per table, so people at one table differ.
 
-const CAR = { id: 'car', label: 'Car', kw: ['car', 'drive', 'driving', 'pick up', 'pick you', 'a ride'], values: ['You have a car with room for 4 people.', 'You do not have a car.', 'You do not have a car.'] };
-const noCar = (...ids) => Object.fromEntries(ids.map((id) => [id, 'You do not have a car.']));
+// Every fact has at least 4 versions, so no two people at a table of 4 share one. A limit's version is worded
+// differently from all of them.
+const CAR = { id: 'car', label: 'Car', kw: ['car', 'drive', 'driving', 'pick up', 'pick you', 'a ride'],
+  values: ['You have a car with room for 4 people.', 'You have a small car with room for 1 more person.', 'You do not have a car, but you have a bike.', 'You do not have a car and usually take the bus.'] };
+const noCar = (...ids) => Object.fromEntries(ids.map((id) => [id, 'You do not have a car, and long car rides make you sick.']));
+const f = (id, label, kw, values, byLimit) => ({ id, label, kw, values, ...(byLimit ? { byLimit } : {}) });
 
 export const FACTS = {
   outing: [
     { ...CAR, byLimit: noCar('no_car') },
-    { id: 'home', label: 'Where you live', kw: ['live', 'coming from', 'far from', 'where are you'], values: ['You live on campus, a 5 minute walk from the trolley.', 'You live in University City, near a bus stop.', 'You live in Pacific Beach, 25 minutes from campus.'] }
+    f('home', 'Where you live', ['live', 'coming from', 'far from', 'where are you'], ['You live on campus, a 5 minute walk from the trolley.', 'You live in University City, near a bus stop.', 'You live in Pacific Beach, 25 minutes from campus.', 'You live in Clairemont, 15 minutes from campus by car.'])
   ],
   project: [
-    { id: 'strength', label: 'What you are good at', kw: ['good at', 'strength', 'skill', 'role', 'best at'], values: ['You are good at research and finding sources.', 'You like writing and editing.', 'You are good at organizing and keeping deadlines.'], byLimit: { slides_person: 'You are the fastest at slides.' } },
-    { id: 'free', label: 'When you are free', kw: ['free', 'schedule', 'available', 'when can you'], values: ['You are free most evenings.', 'You are free Monday and Thursday evenings.'], byLimit: { lab_wed: 'You are free Monday and Thursday evenings.', away_thu: 'You are free Monday and Wednesday evenings.' } }
+    f('strength', 'What you are good at', ['good at', 'strength', 'skill', 'role', 'best at'], ['You are good at research and finding sources.', 'You like writing and editing.', 'You are good at organizing and keeping deadlines.', 'You are good at making charts and figures.'], { slides_person: 'You are the fastest at slides, and writing is your weak spot.' }),
+    f('free', 'When you are free', ['free', 'schedule', 'available', 'when can you'], ['You are free most evenings.', 'You are free Monday and Thursday evenings.', 'You are free Tuesday and Wednesday evenings.', 'You are free in the mornings before 11.'], { lab_wed: 'You are free Monday and Thursday evenings; Wednesday afternoons you are in a lab.', away_thu: 'You are free Monday and Wednesday evenings; Thursday you are away.' })
   ],
   event: [
-    { id: 'role', label: 'Your role in the club', kw: ['role', 'position', 'what do you do'], values: ['You run the club Instagram.', 'You are the club vice president.', 'You joined the club last quarter.', 'You are on the events committee.'], byLimit: { club_40: 'You are the club treasurer.' } },
-    { id: 'bring', label: 'What you can bring', kw: ['bring', 'own', 'projector', 'games', 'cook'], values: ['You own a big board game collection.', 'You can borrow a projector.', 'You love cooking for groups.'] }
+    f('role', 'Your role in the club', ['role', 'position', 'what do you do'], ['You run the club Instagram.', 'You are the club vice president.', 'You joined the club last quarter.', 'You are on the events committee.'], { club_40: 'You are the club treasurer and you track the budget.' }),
+    f('bring', 'What you can bring', ['bring', 'own', 'projector', 'games', 'cook'], ['You own a big board game collection.', 'You can borrow a projector and speakers.', 'You love cooking for groups.', 'You can bring folding chairs and a cooler.'])
   ],
   dinner: [
-    { id: 'diet', label: 'What you eat', kw: ['eat', 'diet', 'vegetarian', 'allerg', 'food'], values: ['You eat everything.', 'You love spicy food.', 'You do not eat pork.'], byLimit: { veg: 'You are vegetarian.' } },
+    f('diet', 'What you eat', ['eat', 'diet', 'vegetarian', 'allerg', 'food'], ['You eat everything.', 'You love spicy food.', 'You do not eat pork.', 'You are trying to eat less meat, but you eat everything.'], { veg: 'You are vegetarian, and you have been for years.' }),
     { ...CAR, byLimit: noCar('no_car') }
   ],
   study: [
-    { id: 'home', label: 'Where you live', kw: ['live', 'commute', 'far', 'coming from'], values: ['You live on campus.', 'You live in University City, a short bus ride away.'], byLimit: { commute: 'You live 45 minutes away by bus.' } },
-    { id: 'prep', label: 'How prepared you are', kw: ['material', 'lecture', 'understand', 'flashcards', 'behind', 'prepared', 'ready'], values: ['You understand the first half of the material well.', 'You are behind on the last two lectures.', 'You made a big set of flashcards.'] }
+    f('home', 'Where you live', ['live', 'commute', 'far', 'coming from'], ['You live on campus, next to Geisel.', 'You live in University City, a short bus ride away.', 'You live in La Jolla, 10 minutes by bus.', 'You live on campus, near Price Center.'], { commute: 'You live 45 minutes away by bus.' }),
+    f('prep', 'How prepared you are', ['material', 'lecture', 'understand', 'flashcards', 'behind', 'prepared', 'ready'], ['You understand the first half of the material well.', 'You are behind on the last two lectures.', 'You made a big set of flashcards.', 'You have last year\'s practice midterm.'])
   ],
   trip: [
-    { ...CAR, values: ['You have a car with room for 5 people.', 'You do not have a car.', 'You do not have a car.'], byLimit: noCar('carsick') },
-    { id: 'been', label: 'Places you have been', kw: ['been', 'visited', 'ever gone', 'been to'], values: ['You have been to Los Angeles many times.', 'You have never been to Joshua Tree.', 'You went to Big Bear last winter.'] }
+    { ...CAR, values: ['You have a car with room for 5 people.', 'You have a small car with room for 2 more people.', 'You do not have a car, but you can rent one.', 'You do not have a car or a license.'], byLimit: noCar('carsick') },
+    f('been', 'Places you have been', ['been', 'visited', 'ever gone', 'been to'], ['You have been to Los Angeles many times.', 'You have never been to Joshua Tree.', 'You went to Big Bear last winter.', 'You have family in Temecula.'])
   ],
   roommates: [
-    { id: 'schedule', label: 'Your schedule', kw: ['schedule', 'sleep', 'wake', 'bed', 'night owl', 'morning'], values: ['You are a night owl and study late.', 'You work weekend mornings.', 'You have a 9 am class most days.'], byLimit: { early_lab: 'You have a 7 am lab every weekday.', travel: 'You travel for work every other week.' } },
-    { id: 'cook', label: 'Cooking', kw: ['cook', 'groceries', 'meal'], values: ['You cook most nights.', 'You mostly eat on campus.', 'You meal prep on Sundays.'], byLimit: { diet: 'You cook vegetarian meals most nights.' } }
+    f('schedule', 'Your schedule', ['schedule', 'sleep', 'wake', 'bed', 'night owl', 'morning'], ['You are a night owl and study late.', 'You work weekend mornings.', 'You have a 9 am class most days.', 'You work evenings at a cafe on campus.'], { early_lab: 'You have a 7 am lab every weekday and go to bed early.', travel: 'You travel for work every other week.' }),
+    f('cook', 'Cooking', ['cook', 'groceries', 'meal'], ['You cook most nights.', 'You mostly eat on campus.', 'You meal prep on Sundays.', 'You bake a lot on weekends.'], { diet: 'You cook vegetarian meals most nights.' })
   ],
   birthday: [
-    { id: 'sam', label: 'You and Sam', kw: ['know sam', 'sam', 'friends'], values: ['You have known Sam since first year.', 'You are Sam\'s lab partner.', 'You live next door to Sam.'] },
-    { id: 'likes', label: 'What Sam likes', kw: ['like', 'likes', 'into', 'enjoy', 'favorite'], values: ['Sam loves trying new restaurants.', 'Sam is really into puzzles.', 'Sam is a big foodie.'] }
+    f('sam', 'You and Sam', ['know sam', 'sam', 'friends'], ['You have known Sam since first year.', 'You are Sam\'s lab partner.', 'You live next door to Sam.', 'You met Sam in a club this year.']),
+    f('likes', 'What you know about Sam', ['like', 'likes', 'into', 'enjoy', 'favorite'], ['Sam loves trying new restaurants.', 'Sam is really into puzzles.', 'Sam is a big foodie.', 'Sam loves anything with a group of friends.'])
   ],
   potluck: [
-    { id: 'cook', label: 'What you can make', kw: ['cook', 'make', 'bring', 'dish'], values: ['You make a great mac and cheese.', 'You do not cook much, but you can buy drinks.', 'You can make guacamole and salsa.'] },
-    { id: 'home', label: 'Where you live', kw: ['live', 'apartment', 'place', 'oven', 'kitchen'], values: ['You live in a shared apartment near campus.', 'You live in the dorms.'] }
+    f('cook', 'What you can make', ['cook', 'make', 'bring', 'dish'], ['You make a great mac and cheese.', 'You do not cook much, but you can buy drinks.', 'You can make guacamole and salsa.', 'You can bake a pie.']),
+    f('home', 'Where you live', ['live', 'apartment', 'place', 'oven', 'kitchen'], ['You live in a shared apartment near campus.', 'You live in the dorms.', 'You live in a studio with a tiny kitchen.', 'You live with your family, 20 minutes away.'], { no_oven: 'You checked the apartment you could use: its oven is broken.' })
   ],
   meeting: [
-    { id: 'time', label: 'On the team', kw: ['team', 'how long', 'joined'], values: ['You have been on the team for a year.', 'You joined the team last month.', 'You write the weekly report.'] },
-    { id: 'where', label: 'Where you work', kw: ['office', 'remote', 'work from', 'where do you work'], values: ['You work from the office near campus.', 'You split your time between home and the office.'], byLimit: { remote: 'You work fully remote from Los Angeles.' } }
+    f('time', 'On the team', ['team', 'how long', 'joined'], ['You have been on the team for a year.', 'You joined the team last month.', 'You write the weekly report.', 'You train the new hires.']),
+    f('where', 'Where you work', ['office', 'remote', 'work from', 'where do you work'], ['You work from the office near campus.', 'You split your time between home and the office.', 'You work from the office three days a week.', 'You mostly work from home in San Diego.'], { remote: 'You work fully remote from Los Angeles.' })
   ],
   sports: [
-    { id: 'played', label: 'Sports you have played', kw: ['played', 'play', 'experience', 'sport'], values: ['You played basketball in high school.', 'You played club volleyball.', 'You have played ultimate frisbee a few times.'] },
-    { id: 'free', label: 'When you are free', kw: ['free', 'schedule', 'available'], values: ['You are free most evenings.', 'You are free Tuesday and Thursday evenings.'], byLimit: { work_tue: 'You are free Thursday evenings and weekends.' } }
+    f('played', 'Sports you have played', ['played', 'play', 'experience', 'sport'], ['You played basketball in high school.', 'You played club volleyball.', 'You have played ultimate frisbee a few times.', 'You ran track in high school.']),
+    f('free', 'When you are free', ['free', 'schedule', 'available'], ['You are free most evenings.', 'You are free Tuesday and Thursday evenings.', 'You are free on weekends.', 'You are free Thursday evenings and Saturdays.'], { work_tue: 'You work Tuesday evenings, so you are free other nights.', class_8: 'You have an 8 am class every day, even Saturday.' })
   ],
   gaming: [
-    { id: 'has', label: 'What you own', kw: ['own', 'switch', 'console', 'pc', 'games', 'controllers'], values: ['You own a Nintendo Switch with four controllers.', 'You have a gaming PC.', 'You own Catan and a few card games.'], byLimit: { weak_laptop: 'You own Catan and a few card games; your laptop is old.' } },
-    { id: 'home', label: 'Where you live', kw: ['live', 'apartment', 'place', 'come over'], values: ['You live in an apartment near UTC.', 'You live in the dorms.'] }
+    f('has', 'What you own', ['own', 'switch', 'console', 'pc', 'games', 'controllers'], ['You own a Nintendo Switch with four controllers.', 'You have a gaming PC.', 'You own Catan and a few card games.', 'You have a PlayStation and a big TV.'], { weak_laptop: 'You own a few card games; your laptop is old and slow.' }),
+    f('home', 'Where you live', ['live', 'apartment', 'place', 'come over'], ['You live in an apartment near UTC.', 'You live in the dorms.', 'You live in a house with three roommates.', 'You live off campus in La Jolla.'])
   ],
   beachhouse: [
-    { id: 'nights', label: 'Nights you are staying', kw: ['night', 'nights', 'stay', 'staying', 'how long'], values: [{ text: 'You are staying both nights, Friday and Saturday.', n: 2 }], byLimit: { one_night: { text: 'You can only stay Saturday night.', n: 1 } } },
-    { id: 'room', label: 'Your room', kw: ['room', 'bedroom', 'sleep', 'couch', 'bed'], values: [{ text: 'You took the big room with its own bathroom.', w: 1.5 }, { text: 'You have a regular bedroom.', w: 1 }, { text: 'You have a regular bedroom.', w: 1 }, { text: 'You are sleeping on the pull-out couch.', w: 0.6 }] },
-    { id: 'apps', label: 'How you pay people', kw: ['venmo', 'zelle', 'cash', 'pay', 'app'], values: ['You use Venmo and Zelle.', 'You use Venmo and Zelle.', 'You mostly use Venmo.'], byLimit: { no_venmo: 'You use Zelle; you do not have Venmo.', cash_risk: 'You use Venmo and Zelle, and you never carry cash.' } }
+    f('nights', 'Nights you are staying', ['night', 'nights', 'stay', 'staying', 'how long'], [
+      { text: 'You are staying both nights, Friday and Saturday.', n: 2 }, { text: 'You arrive Friday afternoon and stay both nights.', n: 2 },
+      { text: 'You stay both nights and head home Sunday morning.', n: 2 }, { text: 'You stay both nights; you are coming down Friday by train.', n: 2 }],
+      { one_night: { text: 'You can only stay Saturday night.', n: 1 } }),
+    f('room', 'Your room', ['room', 'bedroom', 'sleep', 'couch', 'bed'], [
+      { text: 'You took the big room with its own bathroom.', w: 1.5 }, { text: 'You have a regular bedroom upstairs.', w: 1 },
+      { text: 'You have the small bedroom by the kitchen.', w: 0.8 }, { text: 'You are sleeping on the pull-out couch.', w: 0.6 }]),
+    f('apps', 'How you pay people', ['venmo', 'zelle', 'cash', 'what app', 'which app'], ['You use Venmo and Zelle.', 'You mostly use Venmo.', 'You mostly use Zelle through your bank.', 'You use Venmo, Zelle and Apple Pay.'], { no_venmo: 'You use Zelle; you do not have Venmo.', cash_risk: 'You use Venmo and Zelle, and you never carry cash.' })
   ],
   anniversary: [
-    { id: 'role', label: 'In the family', kw: ['cousin', 'oldest', 'closest', 'family'], values: ['You are the oldest cousin.', 'You live closest to your grandparents.', 'You run the family group chat.'] },
-    { ...CAR, values: ['You have a car with room for 4 people.', 'You do not have a car.'] }
+    f('role', 'In the family', ['cousin', 'oldest', 'closest', 'family'], ['You are the oldest cousin.', 'You live closest to your grandparents.', 'You run the family group chat.', 'You are the cousin who plans every birthday.']),
+    { ...CAR }
   ],
   cleanup: [
-    { id: 'role', label: 'Your role in the club', kw: ['role', 'position', 'club'], values: ['You are the club secretary.', 'You joined the club this quarter.', 'You organized last year\'s cleanup.'], byLimit: { club_funds: 'You are the club treasurer.' } },
-    { ...CAR, values: ['You have a car with room for 4 people.', 'You do not have a car.'], byLimit: noCar('no_car') }
+    f('role', 'Your role in the club', ['role', 'position', 'club'], ['You are the club secretary.', 'You joined the club this quarter.', 'You organized last year\'s cleanup.', 'You run the club social media.'], { club_funds: 'You are the club treasurer and you track the budget.' }),
+    { ...CAR, byLimit: { no_car: 'You do not have a car, and neither do most new members.' } }
   ],
   moving: [
-    { id: 'help', label: 'How you can help', kw: ['lift', 'pack', 'help', 'good at'], values: ['You can lift heavy furniture.', 'You are good at packing boxes neatly.', 'You know Alex\'s new neighborhood well.'] },
-    { ...CAR, values: ['You have a car with room for 4 people.', 'You do not have a car.'], byLimit: { no_license: 'You do not have a driver\'s license.' } }
+    f('help', 'How you can help', ['lift', 'pack', 'help', 'good at'], ['You can lift heavy furniture.', 'You are good at packing boxes neatly.', 'You know Alex\'s new neighborhood well.', 'You can assemble furniture fast.']),
+    { ...CAR, byLimit: { no_license: 'You do not have a driver\'s license.' } }
   ],
   hackathon: [
-    { id: 'skill', label: 'Your skills', kw: ['skill', 'good at', 'know', 'strong', 'language', 'frontend', 'backend'], values: ['You are strongest at frontend and design.', 'You are strongest at backend and databases.', 'You have built a few small machine learning projects.'], byLimit: { new_python: 'You only know JavaScript.' } },
-    { id: 'laptop', label: 'Your laptop', kw: ['laptop', 'mac', 'windows', 'computer'], values: ['You have a MacBook.', 'You have a Windows laptop.'], byLimit: { no_mac: 'You have a Windows laptop.' } }
+    f('skill', 'Your skills', ['skill', 'good at', 'know', 'strong', 'language', 'frontend', 'backend'], ['You are strongest at frontend and design.', 'You are strongest at backend and databases.', 'You have built a few small machine learning projects.', 'You are good at pitching and demos.'], { new_python: 'You only know JavaScript, and you are new to hackathons.' }),
+    f('laptop', 'Your laptop', ['laptop', 'mac', 'windows', 'computer'], ['You have a MacBook.', 'You have a new MacBook Pro.', 'You have a Windows gaming laptop.', 'You have a Linux laptop.'], { no_mac: 'You have a Windows laptop, not a Mac.' })
   ],
   concert: [
-    { id: 'music', label: 'Your music', kw: ['music', 'into', 'fan', 'listen'], values: ['You love pop music.', 'You are into indie bands.', 'You like jazz and any live music.'] },
-    { ...CAR, values: ['You have a car with room for 4 people.', 'You do not have a car.'], byLimit: { no_car: 'You have a car, but you do not drive at night.' } }
+    f('music', 'Your music', ['music', 'into', 'fan', 'listen'], ['You love pop music.', 'You are into indie bands.', 'You like jazz and any live music.', 'You mostly listen to hip hop.']),
+    { ...CAR, byLimit: { no_car: 'You have a car, but you do not drive at night.' } }
   ],
   housing: [
-    { id: 'now', label: 'Where you live now', kw: ['live', 'now', 'currently'], values: ['You live in the dorms this year.', 'You live in University City now.'] },
-    { ...CAR, values: ['You have a car.', 'You do not have a car.'], byLimit: noCar('no_car') }
+    f('now', 'Where you live now', ['live', 'now', 'currently'], ['You live in the dorms this year.', 'You live in University City now.', 'You live with your parents and commute.', 'You live in Pacific Beach now.']),
+    { ...CAR, byLimit: { no_car: 'You do not have a car and need a direct bus to campus.' } }
   ],
   volunteer: [
-    { id: 'done', label: 'Volunteering before', kw: ['volunteer', 'experience', 'before', 'done this'], values: ['You volunteered at a food bank in high school.', 'You have tutored middle schoolers.', 'You have never volunteered before.'] },
-    { ...CAR, values: ['You have a car with room for 4 people.', 'You do not have a car.'], byLimit: noCar('carsick') }
+    f('done', 'Volunteering before', ['volunteer', 'experience', 'before', 'done this'], ['You volunteered at a food bank in high school.', 'You have tutored middle schoolers.', 'You have never volunteered before.', 'You fostered a dog last year.']),
+    { ...CAR, byLimit: noCar('carsick') }
   ]
 };
 

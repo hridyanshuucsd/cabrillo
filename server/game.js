@@ -116,9 +116,14 @@ export class Table {
   }
 
   // ---------- basic facts about each seat ----------
+  // The next version of each fact that nobody at the table has (people who left give theirs back).
   dealFacts() {
     const out = {};
-    for (const f of this.factDefs) { const pool = this.factPools[f.id]; out[f.id] = pool[this.factNext[f.id]++ % pool.length]; }
+    for (const f of this.factDefs) {
+      const pool = this.factPools[f.id];
+      const used = new Set((this.players || []).map((p) => p.factPicks?.[f.id]));
+      out[f.id] = pool.find((i) => !used.has(i)) ?? pool[this.factNext[f.id]++ % pool.length];
+    }
     return out;
   }
   // The seat with a role in the scenario (for example, who found the beach house): people before AI players.

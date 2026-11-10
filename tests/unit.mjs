@@ -60,6 +60,32 @@ check('an AI player does not break a tie between two people', buildPanel(t, { P1
 const tr = buildPanel(t, { P1: { travel: 'carpool' }, A1: { travel: 'carpool' }, A2: { travel: 'transit' } }, seats)[2];
 check('getting there: the one who differs goes their own way', tr.status === 'agreed' && tr.leader === 'carpool' && tr.own.length === 1 && tr.own[0].pcode === 'A2');
 
+// facts: every fact has at least 4 versions, a limit's version differs from all of them, and nobody at a table shares one
+import('../server/facts.js');
+const { FACTS } = await import('../server/facts.js');
+const { TASKS } = await import('../server/tasks.js');
+for (const [id, defs] of Object.entries(FACTS)) {
+  check(`facts for ${id} belong to a scenario`, !!TASKS[id]);
+  for (const d of defs) {
+    const texts = d.values.map((v) => (typeof v === 'string' ? v : v.text));
+    check(`${id}.${d.id} has 4 different versions`, new Set(texts).size >= 4, JSON.stringify(texts));
+    for (const [lim, v] of Object.entries(d.byLimit || {})) {
+      check(`${id}.${d.id}: the version for ${lim} is a real limit and differs from the others`, TASKS[id].limits.some((l) => l.id === lim) && !texts.includes(typeof v === 'string' ? v : v.text));
+    }
+  }
+}
+check('every scenario has facts', Object.keys(TASKS).every((id) => FACTS[id]));
+{
+  const { Table } = await import('../server/game.js');
+  const io = { to: () => ({ emit: () => {} }), sockets: { adapter: { rooms: { get: () => ({ size: 1 }) } } } };
+  let clash = [];
+  for (const id of Object.keys(TASKS)) for (let k = 0; k < 15; k++) {
+    const t = new Table({ io, room: { code: 'U', kind: 'class', task: id }, humans: [1, 2, 3, 4].map((i) => ({ key: `u${i}`, name: `P${i}x` })), mode: 'listen', taskId: id, number: 1 });
+    for (const d of t.factDefs) { const texts = t.players.map((p) => t.fact(p, d.id).text); if (new Set(texts).size !== texts.length) clash.push(`${id}.${d.id}: ${texts.join(' / ')}`); }
+  }
+  check('at a table of 4, nobody shares a fact (20 scenarios, 15 deals each)', !clash.length, clash.slice(0, 3).join(' | '));
+}
+
 // model replies
 const list = { type: 'list', title: 'What to bring', items: ['Water', 'Sunscreen'] };
 let a = parseAnswer(JSON.stringify({ text: 'Here is a list.', blocks: [list] }), t);
