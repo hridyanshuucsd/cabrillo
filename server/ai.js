@@ -199,8 +199,9 @@ Someone tagged you with @AI. Answer whatever they ask: about the plan, the optio
 Rules:
 - You never vote, never decide for the group, and never pick a winner between the group's options; lay out trade-offs instead. For anything outside the plan (facts, ideas, advice, math), answer directly.
 - You cannot see anyone's private limit unless it was shared in the chat. Never guess one.
-- Prices, times, schedules and limits in this game are invented: for those, use only the information given. You may use common knowledge about real places and the world.
-- You cannot browse. For live information (today's weather, hours right now, current prices), say you cannot check it live and give general guidance.
+- The game's own prices, times and limits are invented: for those, use only the information given. Real-world facts about real places are fine.
+- Everyone at the table is a student at UC San Diego (La Jolla, San Diego, California). Unless they say otherwise, assume they mean places in and around San Diego. Never ask for their location.
+- When you have web search, use it for real-world and current information (places near campus, hours, prices, events, weather, reviews) and name real places. Without it, give your best general knowledge of San Diego and say that details such as hours and prices may have changed.
 - People appear as codes such as P01, and AI players by first name. When you mention a person, write the code exactly as given (for example P01); never invent a name.
 - Plain language. No emojis, no em dashes, no contractions. Keep "text" to at most 3 sentences; put detail in blocks.
 - Use earlier questions and answers in the chat for follow-ups ("what about the second one").
@@ -232,7 +233,61 @@ function scripted(question, ctx) {
   return 'I can recap the plan so far, list what is still open, and share game information about travel, cost, and timing.';
 }
 
+// ---------- @AI with web search ----------
+// Questions about the real world (places near campus, hours, prices, events, weather) are answered with OpenAI's
+// web search through the Responses API. Sources come back as links under the answer. Any failure falls back to the
+// ordinary answer, so a question always gets a reply.
+const LIVE_RE = /\b(near|nearby|close to (campus|ucsd|us)|around (here|campus|ucsd)|open (now|late|today|on)|opening hours|hours|closes|address|recommend|recommendations?|suggest some|reviews?|rated|rating|tickets?|menu|weather|forecast|today|tonight|tomorrow|this (weekend|week|friday|saturday|sunday)|events?|happening|availability|reservations?|deals?|discounts?|look ?up|search|google|real (places?|options?)|in san diego|what (are|is) (some|the best|good)|any good)\b/i;
+export const wantsSearch = (q) => process.env.AI_SEARCH !== 'off' && !!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && LIVE_RE.test(q);
+const SEARCH_MODELS = ['gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-terra'];
+let searchModel = null;
+async function searchAnswer(system, user) {
+  if (!(await takeSlot(false))) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 35000);
+  state.calls++;
+  try {
+    const chain = process.env.AI_SEARCH_MODEL ? [process.env.AI_SEARCH_MODEL] : [...new Set([searchModel, state.model, ...SEARCH_MODELS].filter(Boolean))];
+    for (const model of chain) {
+      for (const reasoning of [{ effort: 'low' }, null]) {
+        const body = { model, instructions: system, input: user, max_output_tokens: 4000,
+          tools: [{ type: 'web_search', user_location: { type: 'approximate', country: 'US', city: 'San Diego', region: 'California', timezone: 'America/Los_Angeles' } }] };
+        if (reasoning) body.reasoning = reasoning;
+        const r = await fetch('https://api.openai.com/v1/responses', { method: 'POST', signal: controller.signal,
+          headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        if (r.ok) {
+          const d = await r.json();
+          const parts = (d.output || []).filter((o) => o.type === 'message').flatMap((o) => o.content || []).filter((c) => c.type === 'output_text');
+          const text = d.output_text || parts.map((c) => c.text).join('\n');
+          const links = [];
+          for (const a of parts.flatMap((c) => c.annotations || [])) if (a.type === 'url_citation' && a.url && !links.some((l) => l.url === a.url)) links.push({ url: a.url, title: str(a.title || a.url, 80) });
+          if (!text) break;
+          searchModel = model;
+          return { text, links: links.slice(0, 5), source: `openai-search:${model}` };
+        }
+        if (r.status === 429) { state.coolUntil = Date.now() + 8000; throw new Error('search rate limited'); }
+        if (r.status !== 400) break; // this model cannot search with this key: try the next
+      }
+    }
+    throw new Error('no model could search');
+  } catch (e) { state.failures++; throw e; }
+  finally { clearTimeout(timer); freeSlot(); }
+}
+// Markdown links and citation markers that search answers put inside the text: the sources are shown as links instead.
+const unlink = (t) => String(t).replace(/\s*\(\[[^\]]*\]\([^)]*\)\)/g, '').replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '$1').replace(/【[^】]*】/g, '');
+
 export async function answerQuestion(question, ctx) {
+  if (wantsSearch(question)) {
+    try {
+      const r = await searchAnswer(ASK + (ctx.private ? PRIVATE_NOTE : '') + '\nYou have web search for this question.', `${context(ctx)}\n\nQuestion from ${ctx.asker}${ctx.private ? ' (asked privately)' : ''}: ${question}`);
+      if (r?.text) {
+        const a = parseAnswer(unlink(r.text), ctx.task);
+        a.text = unlink(a.text);
+        for (const b of a.blocks) if (b.items) b.items = b.items.map(unlink);
+        if (a.text) return { ...a, links: r.links, source: r.source };
+      }
+    } catch (e) { console.error('AI search failed, answering without it:', e.message); }
+  }
   try {
     const r = await chat(ASK + (ctx.private ? PRIVATE_NOTE : ''), `${context(ctx)}\n\nQuestion from ${ctx.asker}${ctx.private ? ' (asked privately)' : ''}: ${question}`, 700, { json: true, timeoutMs: 25000 });
     if (r?.text) {

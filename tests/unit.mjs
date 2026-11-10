@@ -1,4 +1,5 @@
 // Fast checks of the pure logic: how the chat is read, and how model replies are parsed. Run: node tests/unit.mjs
+process.env.DATABASE_URL ||= 'postgres://unused@localhost:1/unused'; // game.js needs one to load; these checks never connect
 import { applyMessage, statesWish, topicOf, buildPanel, sameMessage } from '../server/listener.js';
 import { taskById } from '../server/tasks.js';
 import { parseAnswer, jsonObjects } from '../server/ai.js';

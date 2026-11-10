@@ -42,6 +42,12 @@ function playerLine(user) {
 globalThis.fetch = async (url, opts) => {
   if (!String(url).startsWith('https://api.openai.com')) return real(url, opts);
   const body = JSON.parse(opts.body);
+  // Responses API with web search: one answer with a cited source, as OpenAI returns it.
+  if (String(url).endsWith('/v1/responses')) {
+    const text = JSON.stringify({ text: 'Two good escape rooms near campus are Escape Room A ([example.com](https://example.com/a)) and Escape Room B.', blocks: [{ type: 'list', title: 'Near UC San Diego', items: ['Escape Room A, about 10 minutes away', 'Escape Room B, in Kearny Mesa'] }] });
+    return new Response(JSON.stringify({ output: [{ type: 'web_search_call', id: 'ws1', status: 'completed', action: { type: 'search', query: 'escape rooms near UCSD' } },
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text, annotations: [{ type: 'url_citation', url: 'https://example.com/a', title: 'Escape Room A', start_index: 0, end_index: 10 }] }] }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
   const sys = body.messages[0].content, user = body.messages[1].content;
   // Like some real models, this stand-in refuses one request field, so the app has to find a request style that works.
   if (body.reasoning_effort) return new Response(JSON.stringify({ error: { message: "Unsupported parameter: 'reasoning_effort' is not supported with this model." } }), { status: 400, headers: { 'content-type': 'application/json' } });

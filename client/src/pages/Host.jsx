@@ -127,7 +127,7 @@ function TableCard({ t, code, act }) {
   const head = (
     <button className="table-head" aria-expanded={open} onClick={() => setOpen(!open)}>
       <span className="grow" style={{ minWidth: 0 }}><strong>Table {t.number} · {t.task}</strong><br />
-        <span className="small muted">{t.mode === 'listen' ? 'Listening AI' : 'Answer-only AI'} · {t.stage === 'forming' ? `${t.humans} of ${t.target} here, ${t.ready} ready` : `${t.players.filter((p) => !p.isAI).length} people`}{t.pendingQuestions.length ? ' · question waiting' : ''}</span></span>
+        <span className="small muted">{t.mode === 'listen' ? 'Listening AI' : 'Answer-only AI'} · {t.stage === 'forming' ? `${t.humans} of ${t.target} here, ${t.ready} ready` : `${t.players.filter((p) => !p.isAI).length} ${t.players.filter((p) => !p.isAI).length === 1 ? 'person' : 'people'}`}{t.pendingQuestions.length ? ' · question waiting' : ''}</span></span>
       <span className={`chip ${t.pendingQuestions.length ? 'warn' : t.stage === 'forming' ? '' : 'ok'}`}>{t.deal ? 'plan locked' : t.stage === 'chat' && t.complete ? 'accepting' : STAGE_LABEL[t.stage]}{clock ? ` · ${clock}` : ''}</span>
     </button>
   );
@@ -144,12 +144,12 @@ function TableCard({ t, code, act }) {
       <div className="stack" style={{ gap: 4 }}>
         {t.players.map((p) => (
           <div key={p.pcode} className="small row between">
-            <span>{p.pcode} {p.name}{p.isAI ? ' (AI)' : ''}</span>
+            <span>{p.pcode} {p.name}{p.isAI && !/\(AI\)/.test(p.name) ? ' (AI)' : ''}</span>
             <span className="muted">{p.msgs} msgs · {p.limitUp ? 'limit came up' : 'limit hidden'}{p.isAI ? '' : p.accepted ? ' · accepts' : ''}</span>
           </div>
         ))}
       </div>
-      <div className="host-chat">{t.chat.map((m) => <div key={m.id} className={`hc ${m.kind}`}><b>{m.name}{m.to ? (m.from === 'AI' ? ` to ${m.to}` : ' to the AI') : ''}:</b> {m.to ? <i>{m.text}</i> : m.text}</div>)}</div>
+      <div className="host-chat">{t.chat.map((m) => <div key={m.id} className={`hc ${m.kind}`}>{m.kind === 'pick' ? <i>{m.text}</i> : <><b>{m.name}{m.to ? (m.from === 'AI' ? ` to ${m.to}` : ' to the AI') : ''}:</b> {m.to ? <i>{m.text}</i> : m.text}</>}</div>)}</div>
       {t.pendingQuestions.length > 0 && <div className="error small">Waiting for the AI to answer: {t.pendingQuestions.map((p) => `${p.name}: "${p.text}"`).join(' | ')}</div>}
       <div className="row wrap-row">
         {t.stage === 'setup' && <button className="btn small ghost" onClick={() => send('host:advance')}>Open the chat now</button>}

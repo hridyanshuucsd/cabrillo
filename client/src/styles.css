@@ -510,3 +510,6 @@ table.tables tr.left-out th, table.tables tr.left-out td:not(.cell-btn) { opacit
 .bill-table .paid { color: var(--primary-dark); font-weight: 800; white-space: nowrap; }
 .card-ai.bill { border: 2px solid var(--primary); }
 .card-ai.bill.stale { border: 1.5px solid var(--line); opacity: .75; }
+
+.blk-links .blk-title { font-size: 12px; color: var(--ink2); text-transform: uppercase; letter-spacing: .04em; }
+.blk ul.links a { font-weight: 700; overflow-wrap: anywhere; }

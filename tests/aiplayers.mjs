@@ -82,6 +82,8 @@ async function run(label, port, env, extraArgs = []) {
     check(`${label}: "@AI how do we get there by bus" gets an answer`, await ask('@AI how do we get there by bus, step by step?'));
     check(`${label}: "@AI split $60 three ways" gets an answer`, await ask('@AI if it costs $60 total how do we split it each?'));
     if (label === 'model') {
+      check('model: a question about real places is answered with web search, with its sources as links', await ask('@ai what escape rooms are near us?') && await wait(a.getByRole('link', { name: 'Escape Room A' }).first(), 5000) && !(await a.locator('.bubble.ai').last().innerText()).includes('example.com'));
+      await a.screenshot({ path: `${DIR}/model_027_search.png` });
       check('model: the packing answer shows a list', (await a.locator('.blk-list li').count()) >= 3);
       check('model: the bus answer shows steps and the options to tap', (await a.locator('.blk-steps li').count()) >= 3 && (await a.locator('.bubble.ai .opts').count()) >= 1);
       check('model: the split answer shows a table with names, not codes', (await a.locator('.blk-table td').allInnerTexts()).includes('Maya'));

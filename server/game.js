@@ -633,6 +633,7 @@ export class Table {
       : b.type === 'table' ? { ...b, rows: b.rows.map((r) => r.map(fix)) } : b.items ? { ...b, items: b.items.map(fix) } : b);
     const pick = blocks.find((b) => b.type === 'pick');
     const extra = { blocks: blocks.filter((b) => !['pick', 'map'].includes(b.type)) };
+    if (a.links?.length) extra.blocks.push({ type: 'links', title: 'Sources', items: a.links.map((l) => ({ url: /^https?:\/\//.test(l.url) ? l.url : '', title: l.title })).filter((l) => l.url) });
     if (pick) extra.poll = pick.field;
     const pay = blocks.find((b) => b.type === 'pay');
     if (pay && !priv) extra.blocks = extra.blocks.filter((b) => b !== pay);

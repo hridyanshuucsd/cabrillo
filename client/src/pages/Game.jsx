@@ -610,6 +610,7 @@ function Block({ b, g, send }) {
     <div className={`blk blk-${b.type}`} role="group" aria-label={b.title || b.type}>
       {b.title && <div className="blk-title">{b.title}</div>}
       {b.type === 'list' && <ul>{b.items.map((x, i) => <li key={i}>{x}</li>)}</ul>}
+      {b.type === 'links' && <ul className="links">{b.items.map((x, i) => <li key={i}><a href={x.url} target="_blank" rel="noreferrer noopener">{x.title}</a></li>)}</ul>}
       {b.type === 'steps' && <ol>{b.items.map((x, i) => <li key={i}>{x}</li>)}</ol>}
       {b.type === 'table' && (
         <div className="blk-scroll"><table>
