@@ -181,7 +181,8 @@ export async function computeAnalytics(room) {
     tables.push(m.table); people.push(...m.people);
   }
   tables.sort((a, b) => (a.table ?? 0) - (b.table ?? 0));
-  const byMode = (mode) => aggregate(tables.filter((t) => t.ai_mode === mode), people);
+  // The same totals twice: for every table, and for tables where every seat was a person (no AI players).
+  const build = (ts) => ({ all: aggregate(ts, people), modes: { listen: aggregate(ts.filter((t) => t.ai_mode === 'listen'), people), ask: aggregate(ts.filter((t) => t.ai_mode === 'ask'), people) } });
   const tableOf = Object.fromEntries(tables.map((t) => [t.session_id, t]));
   const comments = data.feedback.filter((f) => f.comment && tableOf[f.session_id]).map((f) => ({ table: tableOf[f.session_id].table, ai_mode: tableOf[f.session_id].ai_mode, pcode: f.pcode, comment: f.comment }));
   const sources = {};
@@ -189,7 +190,7 @@ export async function computeAnalytics(room) {
   return {
     room: { code: room.code, task: room.task, ai_mode: room.aiMode, group_size: room.groupSize }, generated_at: new Date().toISOString(),
     first_started_at: tables[0]?.started_at || null,
-    all: aggregate(tables, people), modes: { listen: byMode('listen'), ask: byMode('ask') }, mode_names: MODES,
+    ...build(tables), people_only: build(tables.filter((t) => !t.ai_players)), mode_names: MODES,
     tables, participants: people, comments, model_sources: sources,
     limit_ways: LIMIT_WAYS, scales: SCALES, definitions: DEFINITIONS
   };

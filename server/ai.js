@@ -87,8 +87,15 @@ async function chat(system, user, maxTokens, { json = false, timeoutMs = 12000, 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   state.calls++;
+  const once = () => (process.env.ANTHROPIC_API_KEY ? anthropic(system, user, maxTokens, controller.signal) : openai(system, user, maxTokens, json, controller.signal));
   try {
-    return process.env.ANTHROPIC_API_KEY ? await anthropic(system, user, maxTokens, controller.signal) : await openai(system, user, maxTokens, json, controller.signal);
+    try { return await once(); }
+    catch (e) {
+      // "Too many requests": an answer someone is waiting for gets one more try after a short pause; the "AI hears" line does not.
+      if (low || !/ 429 /.test(String(e.message))) throw e;
+      await new Promise((r) => setTimeout(r, 1500));
+      return await once();
+    }
   } catch (e) { state.failures++; throw e; }
   finally { clearTimeout(timer); freeSlot(); }
 }
@@ -203,7 +210,9 @@ Answer with one JSON object and nothing else:
 {"type": "pick", "field": "<part id>"}    (shows the options of one part of the plan as buttons to tap)
 {"type": "map"}                           (shows the place options on a map)`;
 const PRIVATE_NOTE = `
-This question was asked privately: only the person who asked sees your answer. Speak to them directly ("you"). You may help them think through their own situation, or how to raise something with the group. Do not use a map block.`;
+This question was asked privately: only the person who asked sees your answer. Speak to them directly ("you"). You may help them think through their own situation, or how to raise something with the group.
+You do not know their private limit unless they typed it in this private exchange. If they mention "my limit" without saying what it is, do not assume what it is about (money, time, travel or anything else): give wording they can fill in, or ask them what it is.
+Do not use a map block.`;
 
 function scripted(question, ctx) {
   const s = question.toLowerCase();

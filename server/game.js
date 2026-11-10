@@ -830,7 +830,9 @@ export class Table {
   queueHearing() {
     if (aiMode() === 'scripted' || process.env.AI_SUMMARY === 'off') return;
     clearTimeout(this.hearTimer);
-    const wait = Math.max(2500, 7000 - (Date.now() - this.hearAt));
+    // Wait for a pause in the chat, and refresh at most once every 10 seconds per table, so a full class stays well
+    // within the model's rate limits. The rule-based line is shown in the meantime.
+    const wait = Math.max(3000, 10000 - (Date.now() - this.hearAt));
     this.hearTimer = setTimeout(() => this.refreshHearing().catch(() => {}), wait);
   }
   async refreshHearing() {

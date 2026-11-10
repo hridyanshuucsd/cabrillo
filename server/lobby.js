@@ -215,6 +215,19 @@ export class Lobby {
         if (t.humans().length !== before) changed = true;
         await this.closeIfEmpty(t);
         if (room.autoStart && t.stage === 'forming' && t.humans().length >= 3 && (now - t.lastSeatChange > IDLE_START || now - t.openedAt > MAX_FILL)) { await t.begin('idle'); changed = true; }
+        // One or two people who have waited this long are not left waiting for more: they move to a table that can still
+        // take them, or their table starts with labeled AI players. Nobody waits more than about 3 minutes in all.
+        else if (room.autoStart && t.stage === 'forming' && t.humans().length && t.humans().length < 3 && now - Math.min(...t.humans().map((p) => p.seatedAt)) > MAX_FILL) {
+          for (const p of [...t.humans()]) {
+            const dest = this.roomTables(room).filter((x) => x !== t && x.humans().length >= 3 && x.canSeat()).sort((a, b) => a.humans().length - b.humans().length)[0];
+            if (!dest) break;
+            await t.unseat(p.key, 'moved');
+            if (await dest.seat(p)) { this.playerTable.set(p.key, dest.id); this.io.to(`k:${p.key}`).emit('game:start', { sessionId: dest.id }); }
+          }
+          await this.closeIfEmpty(t);
+          if (t.humans().length) await t.begin('waited');
+          changed = true;
+        }
       }
       if (changed) this.emitRoom(room);
     }

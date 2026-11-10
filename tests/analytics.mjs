@@ -70,8 +70,12 @@ try {
   await sleep(300);
   a2.send('game:chat', { text: a2.g.me.limit.say, limit: true });
   const GOOD = { where: 'oldtown', when: 'sun_pm', travel: 'transit', budget: 'low' }; // respects every limit in this scenario
-  for (const f of ['when', 'travel', 'budget']) { for (const p of [a1, a2, a3]) p.send('game:pick', { field: f, option: GOOD[f] }); await sleep(120); }
-  a3.send('game:pick', { field: 'where', option: GOOD.where });
+  await sleep(500);
+  // A tap on something a person already asked for in words changes nothing and is not counted, so count the taps that do.
+  let taps = 1; // the "Me too"
+  const tap = (p, f) => { if (p.g.me.prefs[f] !== GOOD[f]) taps++; p.send('game:pick', { field: f, option: GOOD[f] }); };
+  for (const f of ['when', 'travel', 'budget']) { for (const p of [a1, a2, a3]) tap(p, f); await sleep(150); }
+  tap(a3, 'where');
   check('table 1 has a complete plan', await until(() => a1.g.complete));
   await sleep(1200); // let the time to plan be more than zero
   for (const p of [a1, a2, a3]) p.send('game:accept', { value: true });
@@ -117,7 +121,7 @@ try {
   const truth = a1.g.players.filter((p) => !p.isAI).every((p) => p.limitOk === true);
   check('that matches the results screen people saw', truth);
   eq('messages per person (listening, answer-only)', [a.modes.listen.messages_per_person, a.modes.ask.messages_per_person], [0.8, 1]);
-  eq('taps per person at listening tables, and "Me too" taps', [a.modes.listen.taps_per_person, a.modes.listen.me_too], [2.8, 1]);
+  eq('taps per person at listening tables, and "Me too" taps', [a.modes.listen.taps_per_person, a.modes.listen.me_too], [Math.round((taps / 4) * 10) / 10, 1]);
   eq('silent people (listening, answer-only)', [a.modes.listen.silent_people, a.modes.ask.silent_people], [0, 1]);
   eq('private questions: per listening table, and people who asked', [a.modes.listen.questions_private_per_table, a.modes.listen.people_asked_privately], [0.5, 1]);
   eq('group questions per answer-only table', a.modes.ask.questions_group_per_table, 1);
@@ -132,8 +136,10 @@ try {
   eq('table rows: outcome and how each ended', [t1.outcome, t1.ended_how, t2.outcome, t2.ended_how, t3.outcome, t3.ended_how], ['plan locked', 'plan', 'no plan', 'group', 'no plan', 'host']);
   eq('table 1: route card shown for the bus plan, no ride', [t1.routes, t1.rides_proposed], [1, 0]);
   eq('table 3: one person and two AI players', [t3.humans, t3.ai_players], [1, 2]);
+  eq('leaving out tables with AI players: tables, people, listening tables', [a.people_only.all.tables, a.people_only.all.people, a.people_only.modes.listen.tables, a.people_only.modes.listen.limit_ways.never], [2, 6, 1, 1]);
   const who = a.participants.find((p) => p.table === 1 && p.pcode === 'P03');
   eq('participant row for the person who asked privately', [who.limit_way, who.questions_private, who.taps, who.messages, who.accepted, who.limit_ok, who.feedback], ['never', 1, 4, 0, true, true, false]);
+  eq('taps in participants.csv add up to the taps people made', a.participants.filter((p) => p.table === 1).reduce((x, p) => x + p.taps, 0), taps);
 
   // ---------- files ----------
   const csv = async (f, c = hostCookie) => { const r = await get(`/api/export/${room.code}/${f}`, c); return { ok: r.ok, status: r.status, text: await r.text() }; };
@@ -164,6 +170,9 @@ try {
     const text = await page.locator('body').innerText();
     check(`${label}: headline numbers are shown`, /Plans locked\s*33%/.test(text) && /1 of 3 tables/.test(text) && /People\s*7/.test(text), '');
     check(`${label}: the limit chart has a table of the same numbers`, (await page.getByRole('img', { name: /Listening AI: how limits came up.*Never came up: 2 of 4/ }).count()) === 1 && /Said it themselves/.test(text));
+    await page.getByRole('checkbox', { name: /Leave out tables with AI players/ }).check();
+    check(`${label}: tables with AI players can be left out`, /Tables finished\s*2/.test(await page.locator('.tiles').innerText()));
+    await page.getByRole('checkbox', { name: /Leave out tables with AI players/ }).uncheck();
     await page.getByRole('button', { name: 'Show the numbers' }).click();
     check(`${label}: feedback numbers can be shown as a table`, (await page.getByRole('cell', { name: '4.00' }).count()) >= 1);
     await page.getByRole('button', { name: 'Read the chat at table 1' }).click();

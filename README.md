@@ -72,7 +72,7 @@ To test with several players, open the app in a normal window, a private window,
 
 1. Open the site a few minutes early (the free server sleeps), sign in, choose "Set up a class session", and create it. `/api/health` should show the AI model.
 2. Put the QR code on the projector. Each person who scans it types a first name and is seated at a table at once. They read the briefing while the table fills.
-3. A table starts by itself when it is full, when 3 or more people have waited 40 seconds with nobody new, or 90 seconds after it opened. Turn "Start each table when it is full" off to hold tables until you start them.
+3. A table starts by itself when it is full, when 3 or more people have waited 40 seconds with nobody new, or 90 seconds after it opened. One or two people who have waited 90 seconds move to a table with room, or start with labeled AI players, so nobody waits more than about 3 minutes from joining to chatting. Turn "Start each table when it is full" off to hold tables until you start them.
 4. When most people are in, press "Start the filling table now": people alone or in pairs move to another table first, and anyone left plays with labeled AI players.
 5. Watch the tables. Each one shows its stage (filling, briefing, chatting, accepting, plan locked) and how long it has been chatting. Private notes and private questions are not shown in the console, so it is safe to project.
 6. The chat has no timer. To wrap up, send a **message to every table** ("About 2 minutes left"), then press **End all running tables**.
@@ -85,6 +85,7 @@ Someone who closes the page while their table fills loses the seat after 25 seco
 Open `/analytics/CODE` (host or research admin). Everything is computed from the saved logs, so it works after a restart. People appear as codes; AI players are left out of every per-person number.
 
 - **At a glance:** tables, people, plans locked, median time to a plan, limits that came up, limits the locked plans respect.
+- **Leave out tables with AI players:** one switch recomputes everything for tables where every seat was a person.
 - **Listening AI and answer-only AI, side by side:** reaching a plan, private limits, taking part, and using the AI.
 - **What happened to each person's limit:** said it themselves, passed on by the AI with or without a name, came up in their words only, or never came up.
 - **Feedback:** the four 1 to 5 questions as bars centered on the middle answer, plus "the AI spoke up" and "would you use this again", with a table of the same numbers and the comments.

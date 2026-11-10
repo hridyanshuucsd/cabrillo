@@ -66,7 +66,7 @@ export default function Host() {
           </div>
           <label className="switch">
             <input type="checkbox" checked={room?.autoStart ?? true} onChange={(e) => act('host:auto-start', { value: e.target.checked })} />
-            <span><strong>Start each table when it is full</strong><br /><span className="small muted">People are seated as they join, about {room?.groupSize || 4} per table. Turn this off to hold every table until you start it.</span></span>
+            <span><strong>Start each table when it is full</strong><br /><span className="small muted">People are seated as they join, about {room?.groupSize || 4} per table. One or two people who have waited 90 seconds move to a table with room, or start with labeled AI players. Turn this off to hold every table until you start it.</span></span>
           </label>
           <button className="btn" disabled={!filling.length} onClick={() => act('host:start-all')}>{filling.length > 1 ? `Start all ${filling.length} filling tables now` : filling.length ? 'Start the filling table now' : 'No tables are filling'}</button>
           <button className="btn ghost small" disabled={!playing.length} onClick={() => { if (window.confirm(`End all ${playing.length} running tables now? The chat has no timer, so this is how you wrap up. People go to the results screen.`)) act('host:end-all'); }}>End all running tables</button>
@@ -78,7 +78,8 @@ export default function Host() {
             <div className="row"><input type="text" className="grow" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder="Or write your own" aria-label="Message to every table" /><button className="btn small dark" disabled={!note.trim() || !playing.length}>Send</button></div>
             {sentNote && <span className="small muted" role="status">{sentNote}</span>}
           </form>
-          <p className="small muted" style={{ margin: 0 }}>The chat has no timer: a table finishes when everyone accepts its plan. People alone or in pairs move to another table first; anyone left plays with labeled AI players. {room && `Scenario: ${room.task === 'mixed' ? 'a different one for each table' : room.task}. AI: ${room.aiMode === 'compare' ? 'tables alternate listening and answer-only' : room.aiMode === 'ask' ? 'answer-only' : 'listening'}.`}</p>
+          {done.length > 0 && <Link className="btn small ghost" to={`/analytics/${code}`}>Open analytics ({done.length} {done.length === 1 ? 'table' : 'tables'} finished)</Link>}
+          <p className="small muted" style={{ margin: 0 }}>The chat has no timer: a table finishes when everyone accepts its plan. "Start now" moves people who are alone or in pairs to another table first; anyone left plays with labeled AI players. {room && `Scenario: ${room.task === 'mixed' ? 'a different one for each table' : room.task}. AI: ${room.aiMode === 'compare' ? 'tables alternate listening and answer-only' : room.aiMode === 'ask' ? 'answer-only' : 'listening'}.`}</p>
         </section>
       </div>
       <h2 style={{ margin: '6px 0 0' }}>Tables</h2>

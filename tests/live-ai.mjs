@@ -32,17 +32,39 @@ console.log('my limit:', g.me.limit.text);
 s.emit('game:ready', { sessionId: g.id });
 await wait(2500);
 const say = async (t, ms = 14000) => { s.emit('game:chat', { sessionId: g.id, text: t }); await wait(ms); if (g.hearing) console.log('   AI HEARS:', g.hearing); };
+const ask = async (t, priv, ms = 16000) => { s.emit('game:ask', { sessionId: g.id, text: t, private: priv }); await wait(ms); };
 await wait(16000);
 await say('where should we meet guys?');
 await say('okay, what time tho?');
+// "Me too" on an AI player's message, if one offers it
+const mt = g.chat.find((m) => m.sup && m.from !== g.me.pcode);
+if (mt) { s.emit('game:metoo', { sessionId: g.id, msgId: mt.id }); console.log(`   (tapped "Me too" on: ${mt.text})`); await wait(3000); }
 await say('im down for whatever honestly, just not too expensive');
-await say('@ai pros and cons of the top two places?', 22000);
-await say('@AI what should we bring?', 18000);
-await say('@AI if we take an uber and it costs 26 dollars, what does each of us pay?', 18000);
+await ask('pros and cons of the top two places?', false, 20000);
+await ask('what should we bring?', false);
+console.log('   picks before the what-if question:', JSON.stringify(g.me.prefs));
+await ask('if we take an uber and it costs 26 dollars, what does each of us pay?', false);
+console.log('   picks after the what-if question: ', JSON.stringify(g.me.prefs), '(must be the same)');
+await ask('how do i tell the group about my limit without making it awkward?', true, 18000);
+await ask('ok and what if they still want to drive?', true, 18000);
+// a group decision (rideshare), then the private answers about which ride
+if (g.task.fields.some((f) => f.id === 'travel') && !/carsick/.test(g.me.limit.text)) {
+  for (const [f, o] of Object.entries({ travel: 'rideshare' })) s.emit('game:pick', { sessionId: g.id, field: f, option: o });
+  await wait(12000);
+  const b = g.bookings.find((x) => x.status === 'asking');
+  if (b) { console.log('   ride options:', b.options.map((o) => `${o.name} $${o.perPerson} each`).join(', ')); s.emit('game:booking-answer', { sessionId: g.id, bookingId: b.id, ok: b.options.slice(0, 2).map((o) => o.id) }); await wait(5000); console.log('   ride status:', g.bookings[0].status, g.bookings[0].choice || ''); }
+}
 await say('ok lets lock this in', 12000);
 console.log('plan:', JSON.stringify(g.plan), 'panel:', g.panel.map((f) => `${f.name}=${f.leaderName || '-'}(${f.status})`).join(', '));
 const csv = await (await fetch(`${BASE}/api/export/${room.code}/logs.csv`, { headers: { cookie: hc } })).text();
 const src = {}; for (const m of csv.matchAll(/""source"":""([^"]+)""/g)) src[m[1]] = (src[m[1]] || 0) + 1;
 console.log('answers came from:', JSON.stringify(src));
+await emit(host, 'host:announce', { code: room.code, text: 'About 2 minutes left. Try to settle on a plan.' });
+await wait(1500);
 await emit(host, 'host:end-all', { code: room.code });
+await wait(3000);
+const an = await (await fetch(`${BASE}/api/analytics/${room.code}`, { headers: { cookie: hc } })).json();
+console.log('analytics:', JSON.stringify({ tables: an.all.tables, people: an.all.people, plans_locked: an.all.plans_locked, ended: an.all.ended, limit_ways: an.all.limit_ways, questions_private_per_table: an.all.questions_private_per_table, model_sources: an.model_sources }));
+console.log(`analytics page: ${BASE}/analytics/${room.code} (sign in as the test host to open it)`);
+
 s.close(); host.close(); process.exit(0);

@@ -410,6 +410,7 @@ table.tables td, table.tables tbody th { min-width: 0; padding: 8px; }
 table.tables thead th { white-space: normal; padding: 8px; line-height: 1.25; vertical-align: bottom; }
 table.tables tr.is-open th, table.tables tr.is-open td { background: var(--primary-tint); }
 table.tables .cell-btn { text-align: right; }
+table.tables tr.left-out th, table.tables tr.left-out td:not(.cell-btn) { opacity: .45; }
 .transcript-box { display: flex; flex-direction: column; gap: 10px; background: var(--ground); border-radius: 14px; padding: 12px; }
 .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
 .meter-cell { display: flex; flex-direction: column; gap: 5px; min-width: 150px; max-width: 320px; border-radius: 6px; }

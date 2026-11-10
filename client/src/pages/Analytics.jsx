@@ -114,6 +114,7 @@ export default function Analytics() {
   const [busy, setBusy] = useState(false);
   const [numbers, setNumbers] = useState(false);
   const [open, setOpen] = useState(null);
+  const [peopleOnly, setPeopleOnly] = useState(false); // leave out tables where AI players filled empty seats
   const tip = useTip();
   const narrow = useNarrow();
   const load = () => { setBusy(true); api(`/api/analytics/${code}`).then((x) => { setA(x); setError(''); }).catch((e) => setError(e.message)).finally(() => setBusy(false)); };
@@ -124,9 +125,11 @@ export default function Analytics() {
   if (error && !a) return <div className="wrap stack"><TopBar back /><div className="error" role="alert">{error}</div><Link className="btn" to="/">Back home</Link></div>;
   if (!a) return <div className="wrap center-screen"><div className="spinner" aria-hidden="true" /><p className="muted">Working out the numbers...</p></div>;
 
+  const view = peopleOnly ? a.people_only : a;
   const modes = MODE_KEYS.filter((m) => a.modes[m].tables_started > 0);
-  const all = a.all;
-  const col = (m) => a.modes[m];
+  const all = view.all;
+  const col = (m) => view.modes[m];
+  const withAi = a.all.tables_with_ai_players;
   const exp = (f) => `/api/export/${code}/${f}`;
   const ways = a.limit_ways.map(([key, name]) => ({ key, name, color: WAY_COLORS[key], ink: WAY_INK[key] }));
   const wayParts = (agg) => ways.map((w) => ({ ...w, n: agg.limit_ways[w.key] }));
@@ -151,10 +154,16 @@ export default function Analytics() {
       </header>
       {error && <div className="error" role="alert">{error}</div>}
 
-      {!all.tables ? (
+      {withAi > 0 && a.all.tables > withAi && (
+        <label className="switch no-print">
+          <input type="checkbox" checked={peopleOnly} onChange={(e) => setPeopleOnly(e.target.checked)} />
+          <span><strong>Leave out tables with AI players</strong><br /><span className="small muted">{withAi} of {a.all.tables} finished tables had labeled AI players in empty seats. Turn this on to compare only tables where every seat was a person. The list of tables below always shows all of them.</span></span>
+        </label>
+      )}
+      {!a.all.tables ? (
         <div className="card stack">
           <strong>No table has finished yet.</strong>
-          <span className="muted">{all.tables_started ? `${all.tables_started} ${all.tables_started === 1 ? 'table has' : 'tables have'} started. Numbers appear here as tables finish; press Refresh.` : 'Numbers appear here once tables start and finish. Press Refresh after the session.'}</span>
+          <span className="muted">{a.all.tables_started ? `${a.all.tables_started} ${a.all.tables_started === 1 ? 'table has' : 'tables have'} started. Numbers appear here as tables finish; press Refresh.` : 'Numbers appear here once tables start and finish. Press Refresh after the session.'}</span>
         </div>
       ) : (
         <>
@@ -293,7 +302,7 @@ export default function Analytics() {
                 <thead><tr><th scope="col">Table</th><th scope="col">AI</th><th scope="col">People</th><th scope="col">Outcome</th><th scope="col">Time to plan</th><th scope="col">Limits came up</th><th scope="col">Limits respected</th><th scope="col">Messages</th><th scope="col">Questions to AI</th><th scope="col">AI cards</th><th scope="col"><span className="sr-only">Transcript</span></th></tr></thead>
                 <tbody>
                   {a.tables.map((t) => (
-                    <tr key={t.session_id} className={open === t.session_id ? 'is-open' : ''}>
+                    <tr key={t.session_id} className={`${open === t.session_id ? 'is-open' : ''} ${peopleOnly && t.ai_players ? 'left-out' : ''}`}>
                       <th scope="row">Table {t.table} <span className="muted" style={{ fontWeight: 500 }}>· {t.task_name}</span></th>
                       <td data-label="AI">{t.ai_mode === 'listen' ? 'Listening' : 'Answer-only'}</td>
                       <td data-label="People">{t.humans}{t.ai_players ? <span className="muted"> + {t.ai_players} AI</span> : ''}</td>

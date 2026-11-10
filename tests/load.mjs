@@ -133,16 +133,18 @@ const modes = first.map((t) => t.mode);
 check('both AI modes are used about equally', Math.abs(modes.filter((m) => m === 'listen').length - modes.filter((m) => m === 'ask').length) <= 1, `(${modes.filter((m) => m === 'listen').length} listening, ${modes.filter((m) => m === 'ask').length} answer-only)`);
 check('no table is left filling', first.every((t) => t.stage !== 'forming'));
 
-// a late arrival after every table started gets a new table, which the host starts with AI players
+// a late arrival after every table started gets a new table
 await sleep(4000);
 const latest = await student(N + 1);
 await sleep(500);
 const lateTable = hostTables.get(latest.sessionId);
 check('a late arrival is seated at once', !!latest.sessionId && !first.some((t) => t.id === latest.sessionId && t.players.every((p) => !p.isAI)));
-if (lateTable?.stage === 'forming') await emit(host, 'host:start-table', { code: room.code, sessionId: latest.sessionId });
-await sleep(800);
+// Nobody waits more than about 3 minutes: with nobody else arriving, the table starts by itself with AI players
+// (90 seconds after the person sat down; 9 seconds at this test's speed). The host does not have to notice.
+const waitedFrom = Date.now();
+for (let k = 0; k < 40 && hostTables.get(latest.sessionId)?.stage === 'forming'; k++) await sleep(500);
 const extra = hostTables.get(latest.sessionId);
-check('the late arrival plays with AI players in the empty seats', !!extra && extra.stage !== 'forming' && extra.players.filter((p) => p.isAI).length >= 1, extra ? `(table ${extra.number}, ${extra.players.length} seats)` : '');
+check('a late arrival who is alone starts with AI players without the host doing anything', !!extra && extra.stage !== 'forming' && extra.players.filter((p) => p.isAI).length >= 1, extra ? `(table ${extra.number}, ${extra.players.length} seats, after ${Math.round((Date.now() - waitedFrom) / 100) / 10} s at test speed)` : '');
 students.push(latest);
 
 // ---------- wait for every table to finish ----------
