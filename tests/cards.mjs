@@ -1,5 +1,5 @@
-// Map, ride and table cards on phones: a group asks for a map, books a ride (switches the car type), watches the ride
-// play out on the map, and reserves a table. Screenshots go to test-shots/cards/. Run: npm run build && node tests/cards.mjs
+// Map, ride and table cards on phones: the AI adds a map when two places are compared and prices a ride when the plan
+// says rideshare; the group switches the car type, watches the ride play out on the map, and asks for a table. Screenshots go to test-shots/cards/. Run: npm run build && node tests/cards.mjs
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -44,14 +44,20 @@ try {
     ps.push(p);
   }
   const [a, b, c] = ps;
-  for (const p of ps) await p.getByRole('button', { name: 'I am ready' }).click();
+  for (const p of ps) {
+    await p.getByRole('button', { name: 'Next: your private limit' }).click();
+    await p.getByRole('button', { name: /^Keep (this|my own) limit$/ }).click();
+    await p.getByRole('button', { name: 'I am ready' }).click();
+  }
   await a.getByLabel('Message').waitFor();
-  const say = async (p, t) => { await p.getByLabel('Message').fill(t); await p.getByRole('button', { name: 'Send', exact: true }).click(); };
+  const say = async (p, t) => { await p.getByLabel('Message').fill(t); await p.getByRole('button', { name: 'Send', exact: true }).click(); await p.waitForTimeout(250); };
 
+  // The AI adds a map by itself as soon as two places are being compared.
   await say(a, 'Old Town for tacos sounds good');
-  await say(b, 'yes Old Town works for me');
-  await say(c, 'can you show us a map of the options?');
-  check('asking for a map posts a map card', await wait(a.getByRole('group', { name: 'Map of the options' })));
+  await say(b, 'I was thinking Balboa Park, honestly');
+  check('the AI adds a map when two places are compared, without being asked', await wait(a.getByRole('group', { name: 'Map of the options' })));
+  check('the map says why the AI added it', await wait(a.getByText('The AI added this because you are comparing places.').first(), 3000));
+  await say(b, 'ok fine, Old Town works for me too');
   await a.waitForTimeout(1500); // tiles
   await a.getByRole('group', { name: 'Map of the options' }).scrollIntoViewIfNeeded();
   await a.screenshot({ path: `${DIR}/01_map_card.png` });
@@ -61,8 +67,11 @@ try {
   await a.screenshot({ path: `${DIR}/02_map_full.png` });
   await a.getByRole('button', { name: 'Close' }).click();
 
-  await say(b, 'can someone book an uber for us');
-  check('asking for a ride posts a ride card', await wait(a.getByRole('group', { name: 'Ride to Old Town' })));
+  // The AI prices a ride by itself once the plan says rideshare.
+  await say(a, 'let us take a rideshare there');
+  await say(c, 'rideshare is fine with me');
+  check('the AI prices a ride when the plan says rideshare, without being asked', await wait(a.getByRole('group', { name: 'Ride to Old Town' })));
+  check('the AI says why it added the ride', await wait(a.getByText('The AI added this because the plan says rideshare.').first(), 3000));
   await a.waitForTimeout(1500);
   await a.getByRole('group', { name: 'Ride to Old Town' }).scrollIntoViewIfNeeded();
   await a.screenshot({ path: `${DIR}/03_ride_options.png` });

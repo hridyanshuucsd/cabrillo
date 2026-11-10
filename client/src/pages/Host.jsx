@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { useParams } from 'react-router-dom';
 import { emit, getSocket, mmss, useCountdown, useSocketEvent } from '../lib.js';
 import TopBar from '../components/Brand.jsx';
 
-const STAGE_LABEL = { forming: 'filling', setup: 'set up', chat: 'chat', confirm: 'confirm', wrap: 'wrap up', done: 'done' };
+const STAGE_LABEL = { forming: 'filling', setup: 'briefing', chat: 'chatting', done: 'finished' };
 
 function useQr(text) {
   const [svg, setSvg] = useState('');
@@ -66,7 +66,8 @@ export default function Host() {
             <span><strong>Start each table when it is full</strong><br /><span className="small muted">People are seated as they join, about {room?.groupSize || 4} per table. Turn this off to hold every table until you start it.</span></span>
           </label>
           <button className="btn" disabled={!filling.length} onClick={() => act('host:start-all')}>{filling.length > 1 ? `Start all ${filling.length} filling tables now` : filling.length ? 'Start the filling table now' : 'No tables are filling'}</button>
-          <p className="small muted" style={{ margin: 0 }}>People alone or in pairs move to another table first; anyone left plays with labeled AI players. {room && `Scenario: ${room.task === 'mixed' ? 'a different one for each table' : room.task}. AI: ${room.aiMode === 'compare' ? 'tables alternate listening and answer-only' : room.aiMode === 'ask' ? 'answer-only' : 'listening'}.`}</p>
+          <button className="btn ghost small" disabled={!playing.length} onClick={() => { if (window.confirm(`End all ${playing.length} running tables now? The chat has no timer, so this is how you wrap up. People go to the results screen.`)) act('host:end-all'); }}>End all running tables</button>
+          <p className="small muted" style={{ margin: 0 }}>The chat has no timer: a table finishes when everyone accepts its plan. People alone or in pairs move to another table first; anyone left plays with labeled AI players. {room && `Scenario: ${room.task === 'mixed' ? 'a different one for each table' : room.task}. AI: ${room.aiMode === 'compare' ? 'tables alternate listening and answer-only' : room.aiMode === 'ask' ? 'answer-only' : 'listening'}.`}</p>
         </section>
       </div>
       <h2 style={{ margin: '6px 0 0' }}>Tables</h2>
@@ -99,6 +100,11 @@ export default function Host() {
 function TableCard({ t, code, act }) {
   const left = useCountdown(t.stageEndsAt, t.serverNow);
   const [say, setSay] = useState('');
+  // The chat has no timer, so the host sees how long each table has been chatting.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const i = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(i); }, []);
+  const offset = useRef(t.serverNow - Date.now());
+  const clock = t.stage === 'setup' ? `${mmss(left)} left` : t.stage === 'chat' && t.stageStartedAt ? mmss(Math.max(0, Math.round((now + offset.current - t.stageStartedAt) / 1000))) : '';
   // On a phone the host sees one line per table and opens the ones that need attention; on a wide screen all are open.
   const [open, setOpen] = useState(() => window.innerWidth >= 720);
   const send = (ev, extra) => getSocket().emit(ev, { code, sessionId: t.id, ...extra });
@@ -106,7 +112,7 @@ function TableCard({ t, code, act }) {
     <button className="table-head" aria-expanded={open} onClick={() => setOpen(!open)}>
       <span className="grow" style={{ minWidth: 0 }}><strong>Table {t.number} · {t.task}</strong><br />
         <span className="small muted">{t.mode === 'listen' ? 'Listening AI' : 'Answer-only AI'} · {t.stage === 'forming' ? `${t.humans} of ${t.target} here, ${t.ready} ready` : `${t.players.filter((p) => !p.isAI).length} people`}{t.pendingQuestions.length ? ' · question waiting' : ''}</span></span>
-      <span className={`chip ${t.pendingQuestions.length ? 'warn' : t.stage === 'forming' ? '' : 'ok'}`}>{STAGE_LABEL[t.stage]}{!['done', 'forming'].includes(t.stage) ? ` · ${mmss(left)}` : ''}</span>
+      <span className={`chip ${t.pendingQuestions.length ? 'warn' : t.stage === 'forming' ? '' : 'ok'}`}>{t.deal ? 'plan locked' : t.stage === 'chat' && t.complete ? 'accepting' : STAGE_LABEL[t.stage]}{clock ? ` · ${clock}` : ''}</span>
     </button>
   );
   const startNow = t.stage === 'forming' && <button className="btn small" onClick={() => act('host:start-table', { sessionId: t.id })}>Start this table now{t.humans < 3 ? ' with AI players' : ''}</button>;
@@ -130,7 +136,8 @@ function TableCard({ t, code, act }) {
       <div className="host-chat">{t.chat.map((m) => <div key={m.id} className={`hc ${m.kind}`}><b>{m.name}{m.to ? ` to ${m.to} (private)` : ''}:</b> {m.text}</div>)}</div>
       {t.pendingQuestions.length > 0 && <div className="error small">Waiting for the AI to answer: {t.pendingQuestions.map((p) => `${p.name}: "${p.text}"`).join(' | ')}</div>}
       <div className="row wrap-row">
-        <button className="btn small ghost" onClick={() => send('host:advance')} disabled={t.stage === 'done'}>Next stage</button>
+        {t.stage === 'setup' && <button className="btn small ghost" onClick={() => send('host:advance')}>Open the chat now</button>}
+        {t.stage === 'chat' && <button className="btn small ghost" onClick={() => { if (window.confirm(`End table ${t.number} now? People go to the results screen.`)) send('host:advance'); }}>End this table</button>}
         <button className="btn small ghost" onClick={() => send('host:pause', { paused: !t.aiPaused })}>{t.aiPaused ? 'Resume automatic AI' : 'Run the AI myself'}</button>
       </div>
       <form className="row" onSubmit={(e) => { e.preventDefault(); if (say.trim()) { send('host:say', { text: say }); setSay(''); } }}>

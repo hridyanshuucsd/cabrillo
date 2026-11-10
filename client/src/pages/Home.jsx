@@ -46,7 +46,7 @@ export default function Home() {
       <div>
         <div className="label">Hi {me.name}</div>
         <h1>Plan something together, with an AI that listens.</h1>
-        <p className="muted">A 10 minute session for 3 to 5 people. Chat to agree on one plan while the AI keeps track of what you have decided and what is still open. Each person holds one private limit. At the end, see whose limits made it into the plan.</p>
+        <p className="muted">For 3 to 5 people, usually about 10 minutes. Chat to agree on one plan while the AI keeps track of what you have decided and what is still open. Each person holds one private limit. At the end, see whose limits made it into the plan.</p>
       </div>
 
       <div className="card stack">

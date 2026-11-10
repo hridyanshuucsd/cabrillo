@@ -21,7 +21,7 @@ const results = [];
 const check = (name, ok, extra = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${extra}`); };
 // iPhone SE (1st gen) is 320 x 568, the smallest phone still in use: the hardest case for the keyboard.
 const sizes = { se: devices['iPhone SE'], i14: devices['iPhone 14'] };
-async function audit(page, name, { composer = false } = {}) {
+async function audit(page, name, { composer = false, share = 0.5 } = {}) {
   await page.waitForTimeout(350);
   const r = await page.evaluate(() => {
     const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
@@ -38,7 +38,7 @@ async function audit(page, name, { composer = false } = {}) {
   if (r.small.length) check(`${name}: tap targets at least 32 px tall`, false, r.small.join(', '));
   if (composer) {
     check(`${name}: message box is on screen`, r.composerBottom !== null && r.composerBottom <= r.vh + 1, `(bottom ${Math.round(r.composerBottom)} of ${Math.round(r.vh)})`);
-    check(`${name}: messages get most of the screen`, r.msgsHeight >= 0.5 * r.vh, `(${Math.round(r.msgsHeight)} of ${Math.round(r.vh)} px)`);
+    check(`${name}: messages get most of the screen`, r.msgsHeight >= share * r.vh, `(${Math.round(r.msgsHeight)} of ${Math.round(r.vh)} px)`);
   }
   await page.screenshot({ path: `${DIR}/${name}.png` });
 }
@@ -50,7 +50,7 @@ async function withKeyboard(page, name, fn) {
   await page.waitForTimeout(300);
   await fn?.();
   await audit(page, name, { composer: true });
-  const planHidden = !(await page.locator('.planbar, .actionbar').first().isVisible().catch(() => false));
+  const planHidden = !(await page.locator('.board, .actionbar').first().isVisible().catch(() => false));
   check(`${name}: plan and buttons fold away while typing`, planHidden);
   await page.setViewportSize(vp);
   await page.locator('body').click({ position: { x: 5, y: 5 } }).catch(() => {});
@@ -86,58 +86,77 @@ try {
     await p.getByLabel('Your first name').fill(n);
     await p.getByRole('button', { name: 'Agree and join' }).click();
     await p.waitForURL(/\/play\//);
-    if (n === 'Maya') { await p.getByText('1 of 3 people are here').waitFor(); await audit(p, 'se_06_table_filling'); await p.screenshot({ path: `${DIR}/se_06_table_filling_full.png`, fullPage: true }); await audit(host, 'i14_07_host_filling'); }
+    if (n === 'Maya') {
+      await p.getByText('Step 1 of 3').waitFor(); await audit(p, 'se_06_briefing_task');
+      await p.getByRole('button', { name: 'Next: your private limit' }).click(); await audit(p, 'se_07_briefing_limit');
+      await p.getByRole('button', { name: 'Write my own' }).click(); await audit(p, 'se_08_briefing_write_own');
+      await p.getByRole('button', { name: 'Cancel' }).click();
+      await p.getByRole('button', { name: 'Keep this limit' }).click(); await audit(p, 'se_09_briefing_how');
+      await p.getByRole('button', { name: 'I am ready' }).click(); await audit(p, 'se_10_briefing_waiting');
+      await audit(host, 'i14_11_host_filling');
+    }
     people.push(p);
   }
   const [a, b, c] = people;
-  await a.getByText('Your table is starting').waitFor();
-  check('a table starts by itself when it fills', true);
-  await audit(a, 'se_08_setup');
   // reload returns to the same table
-  await b.reload(); await b.getByText('Your table is starting').waitFor();
+  await b.reload(); await b.getByText('Step 1 of 3').waitFor();
   check('reloading the page returns to the same table', true);
-  for (const p of people) await p.getByRole('button', { name: 'I am ready' }).click();
-  await a.getByLabel('Message').waitFor();
+  for (const p of [b, c]) {
+    await p.getByRole('button', { name: 'Next: your private limit' }).click();
+    await p.getByRole('button', { name: 'Keep this limit' }).click();
+    await p.getByRole('button', { name: 'I am ready' }).click();
+  }
+  await a.getByLabel('Message').waitFor({ timeout: 8000 });
+  check('the chat opens when the table is full and everyone is ready', true);
   const say = async (p, t) => { await p.getByLabel('Message').fill(t); await p.getByRole('button', { name: 'Send', exact: true }).click(); };
   await say(b, 'Hi all, what is everyone thinking?');
   await say(c, 'I am flexible, maybe something cheap');
   await say(a, 'Sounds good to me, let us pick soon');
   await say(b, 'Should we decide the first thing now?');
-  await audit(a, 'se_09_chat', { composer: true });
-  await audit(b, 'i14_09_chat', { composer: true });
-  await withKeyboard(a, 'se_10_chat_keyboard', async () => {
+  await audit(a, 'se_12_chat', { composer: true });
+  await audit(b, 'i14_12_chat', { composer: true });
+  await withKeyboard(a, 'se_13_chat_keyboard', async () => {
     await a.getByLabel('Message').fill('typing with the keyboard open');
     await c.getByLabel('Message').fill('x'); await c.getByLabel('Message').fill('xy'); // typing indicator for others
   });
-  check('others see who is typing', true);
   await say(a, 'typing with the keyboard open');
   check('message sent with the keyboard open reaches others', await c.getByText('typing with the keyboard open').first().waitFor({ timeout: 4000 }).then(() => true, () => false));
-  const listen = (await a.locator('.planbar').count()) > 0;
-  if (listen) { await a.getByRole('button', { name: 'Plan so far details and AI controls' }).click(); await audit(a, 'se_11_plan_sheet'); await a.getByRole('button', { name: 'Close' }).click(); }
+  // pick by tapping
+  await a.locator('.pchip').first().click();
+  await audit(a, 'se_14_pick_sheet');
+  await a.getByRole('dialog').locator('.opt').first().click();
+  await a.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
+  await a.getByRole('button', { name: 'The plan so far, details' }).click(); await audit(a, 'se_15_plan_sheet'); await a.getByRole('button', { name: 'Close' }).click();
+  await a.getByRole('button', { name: 'Task' }).click(); await audit(a, 'se_16_task_sheet'); await a.getByRole('button', { name: 'Close' }).click();
+  // the three ways to share, and the draft in the message box
   await a.getByRole('button', { name: 'Your private limit' }).click();
-  await audit(a, 'se_12_limit_sheet');
-  await a.getByRole('button', { name: 'Post my limit to the group' }).click();
-  await b.getByText('shared a private limit').first().waitFor();
-  await audit(c, 'se_13_chat_after_share', { composer: true });
-  await audit(host, 'i14_14_host_tables');
-  for (const p of people) await p.getByRole('button', { name: 'Ready to confirm' }).click();
-  await a.getByRole('heading', { name: 'Final plan' }).waitFor();
-  await audit(a, 'se_15_confirm');
-  await b.getByRole('tab', { name: /Chat/ }).click();
-  await say(b, 'all good with me');
-  await a.locator('.tabs .dot').waitFor({ timeout: 5000 });
-  check('confirm screen shows unread messages on the Chat tab', true);
-  await a.getByRole('tab', { name: /Chat/ }).click();
-  await audit(a, 'se_16_confirm_chat', { composer: true });
-  await withKeyboard(a, 'se_17_confirm_chat_keyboard');
-  await a.getByRole('tab', { name: 'Final plan' }).click();
-  for (const grp of await a.locator('.pick[role=group]').all()) if (!(await grp.locator('[aria-pressed=true]').count())) await grp.locator('button').first().click();
-  await b.getByRole('tab', { name: 'Final plan' }).click();
-  for (const p of people) await p.getByRole('button', { name: 'Accept this plan' }).click();
+  await audit(a, 'se_17_limit_sheet');
+  await a.getByRole('button', { name: /^Say it myself/ }).click();
+  await a.getByText('Draft of your limit').waitFor();
+  await audit(a, 'se_18_limit_draft', { composer: true, share: 0.4 });
+  await a.getByRole('button', { name: 'Send', exact: true }).click();
+  await b.getByText('shared a limit').first().waitFor();
+  // everyone picks the first option of every part, then accepts
+  const fields = await a.locator('.pchip').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label').split(':')[0]));
+  for (const p of [a, b]) for (const fl of fields) {
+    await p.locator(`.pchip[aria-label^="${fl}:"]`).click();
+    const btn = p.getByRole('dialog').locator('.opt').first();
+    if ((await btn.getAttribute('aria-pressed')) !== 'true') await btn.click();
+    await p.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
+  }
+  await a.getByRole('button', { name: /Accept the plan|Withdraw/ }).waitFor({ timeout: 6000 });
+  await audit(a, 'se_19_chat_accept', { composer: true });
+  await audit(host, 'i14_20_host_tables');
+  for (const p of people) {
+    await p.getByRole('button', { name: 'Accept the plan' }).click();
+    // a plan that breaks this person's limit asks first
+    const sheet = p.getByRole('dialog', { name: 'Accept this plan?' });
+    if (await sheet.waitFor({ timeout: 700 }).then(() => true, () => false)) { if (p === a) await audit(p, 'se_21_accept_anyway'); await sheet.getByRole('button', { name: /accept anyway/i }).click(); }
+  }
   await a.getByText('What everyone was holding').waitFor({ timeout: 8000 });
-  await audit(a, 'se_18_results');
-  await a.screenshot({ path: `${DIR}/se_18_results_full.png`, fullPage: true });
-  await audit(host, 'i14_19_host_done');
+  await audit(a, 'se_22_results');
+  await a.screenshot({ path: `${DIR}/se_22_results_full.png`, fullPage: true });
+  await audit(host, 'i14_23_host_done');
 } catch (e) { console.error(e); results.push(false); }
 await browser.close(); server.kill(); await pg.stop();
 const failed = results.filter((x) => !x).length;

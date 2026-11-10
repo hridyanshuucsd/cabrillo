@@ -28,6 +28,7 @@ export function MapCard({ m }) {
     <div className="card-ai mapcard" role="group" aria-label="Map of the options">
       <button className="map-tap" onClick={() => setFull(true)} aria-label="Open the map full screen"><MapView points={pts} height={150} /><span className="map-hint">Tap to open</span></button>
       <div className="card-ai-body">
+        {m.auto && <div className="why">The AI added this because you are comparing places.</div>}
         <div className="row between"><strong>Options on the map</strong><span className="small muted">from campus</span></div>
         {m.places.map((p, i) => (
           <div key={p.id} className={`place-row ${p.id === m.leader ? 'lead' : ''}`}>
@@ -79,6 +80,7 @@ export function RideCard({ b, send, offset }) {
         <span className="map-hint">{ph ? 'Live demo' : 'Tap to open'}</span>
       </button>
       <div className="card-ai-body">
+        {b.auto && <div className="why">The AI added this because the plan says rideshare.</div>}
         <div className="row between" style={{ alignItems: 'flex-start' }}>
           <div><strong className="ride-title">Ride to {b.place.name}</strong><div className="small muted">From {b.origin.name} · {b.miles} mi · about {b.minutes} min</div></div>
           <span className={`chip ${b.status === 'booked' ? 'ok' : b.status === 'declined' ? 'warn' : ''}`}>{b.status === 'pending' ? 'Waiting for everyone' : b.status === 'booked' ? 'Booked (demo)' : 'Not booked'}</span>
@@ -137,6 +139,7 @@ export function TableCard({ b, send }) {
     <div className="card-ai table" role="group" aria-label={`Booking: ${b.title}`}>
       <button className="map-tap" onClick={() => setFull(true)} aria-label="Open the map full screen"><MapView points={pts} height={130} /><span className="map-hint">Tap to open</span></button>
       <div className="card-ai-body">
+        {b.auto && <div className="why">The AI added this because you picked a place and a time.</div>}
         <div className="row between" style={{ alignItems: 'flex-start' }}>
           <div><strong className="ride-title">{b.restaurant}</strong><div className="small muted">Near {b.place.name} · table for {b.n}</div></div>
           <span className={`chip ${b.status === 'booked' ? 'ok' : b.status === 'declined' ? 'warn' : ''}`}>{b.status === 'pending' ? 'Waiting for everyone' : b.status === 'booked' ? 'Reserved (demo)' : 'Not booked'}</span>

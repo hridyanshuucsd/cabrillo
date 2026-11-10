@@ -140,14 +140,15 @@ io.on('connection', (socket) => {
     socket.emit('game:state', t.viewFor(id.key)); ack(cb, { ok: true });
   });
   socket.on('game:ready', ({ sessionId }) => table(sessionId)?.ready(id.key));
-  socket.on('game:share', ({ sessionId }) => table(sessionId)?.shareLimit(id.key));
-  socket.on('game:confirm-ready', ({ sessionId }) => table(sessionId)?.confirmReady(id.key));
+  socket.on('game:limit', ({ sessionId, action, text }) => table(sessionId)?.changeLimit(id.key, String(action), text));
+  socket.on('game:share', ({ sessionId, mode }) => table(sessionId)?.shareLimit(id.key, String(mode)));
+  socket.on('game:pick', ({ sessionId, field, option }) => table(sessionId)?.pick(id.key, String(field), String(option)));
+  socket.on('game:end-vote', ({ sessionId, value }) => table(sessionId)?.endVote(id.key, value));
   socket.on('game:pause-ai', ({ sessionId, paused }) => table(sessionId)?.pauseAI(id.key, paused));
-  socket.on('game:set', ({ sessionId, field, option }) => table(sessionId)?.setField(id.key, String(field), String(option)));
-  socket.on('game:chat', ({ sessionId, text }) => table(sessionId)?.say(id.key, text));
+  socket.on('game:chat', ({ sessionId, text, limit }) => table(sessionId)?.say(id.key, text, { limit: !!limit }));
   socket.on('game:ask', ({ sessionId, text }) => table(sessionId)?.ask(id.key, text));
   socket.on('game:booking', ({ sessionId, bookingId, value }) => table(sessionId)?.bookingVote(id.key, String(bookingId), value));
-  socket.on('game:accept', ({ sessionId, value }) => table(sessionId)?.accept(id.key, value));
+  socket.on('game:accept', ({ sessionId, value, fits }) => table(sessionId)?.accept(id.key, value, fits));
 
   // Host console: watch tables, advance stages, pause the AI and speak for it (Wizard of Oz).
   const hostRoom = async (code) => { const room = await lobby.getRoom(code); return room && room.ownerKey === id.key ? room : null; };
@@ -161,6 +162,12 @@ io.on('connection', (socket) => {
   const hostTable = async (code, sid) => { const room = await hostRoom(code); const t = room && lobby.tables.get(sid); return t && t.room.code === room.code ? t : null; };
   socket.on('host:advance', safe(async ({ code, sessionId }) => (await hostTable(code, sessionId))?.hostAdvance()));
   socket.on('host:pause', safe(async ({ code, sessionId, paused }) => (await hostTable(code, sessionId))?.hostPause(paused)));
+  socket.on('host:end-all', safe(async ({ code }, cb) => {
+    const room = await hostRoom(code); if (!room) return ack(cb, { error: 'Only the host can end tables.' });
+    let n = 0;
+    for (const tid of room.tableIds) { const t = lobby.tables.get(tid); if (t && ['setup', 'chat'].includes(t.stage)) { t.log('host', 'host_ended_all', {}, 'host'); t.enter('done'); n++; } }
+    ack(cb, { ok: true, ended: n });
+  }));
   socket.on('host:say', safe(async ({ code, sessionId, text }) => (await hostTable(code, sessionId))?.hostSay(text)));
 
   socket.on('disconnect', () => lobby.dropSocket(socket.id, id.key));

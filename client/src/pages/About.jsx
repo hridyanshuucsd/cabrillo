@@ -21,7 +21,7 @@ export default function About() {
       </div>
       <div className="card stack">
         <h2>The AI</h2>
-        <p className="small" style={{ margin: 0 }}>The AI is always labeled. At most tables it reads the chat, keeps the Plan so far, and asks a few questions; at some class tables it only answers when asked, so we can compare the two. It cannot see private limits and cannot vote. Anyone at the table can pause it. During class tests, a teammate may speak for it.</p>
+        <p className="small" style={{ margin: 0 }}>The AI is always labeled. At most tables it reads the chat, keeps the plan above the chat up to date, and asks at most two questions of its own; at some class tables it only answers when asked, so we can compare the two. Your private limit is not sent to the AI model. It reaches the group only if you say it or ask the AI to pass it on, with or without your name. The AI cannot vote. Anyone at the table can pause it. During class tests, a teammate may speak for it.</p>
       </div>
       <p className="small muted">The tasks use real San Diego place names, but every limit, price, and time in a session is invented for play.</p>
       <Link to="/" className="btn">Back</Link>

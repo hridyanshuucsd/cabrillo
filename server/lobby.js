@@ -9,7 +9,8 @@ const GATHER = Number(process.env.GATHER_SECONDS || 10) * 1000;       // Play no
 const KEEP_TABLE = 30 * 60 * 1000;
 const SCALE_SWEEP = Math.min(1, Number(process.env.TIME_SCALE || 1)) || 1;
 const AWAY_LIMIT = 25 * 1000 * SCALE_SWEEP;  // a person who closes the page while their table fills loses the seat after this
-const IDLE_START = Number(process.env.IDLE_START_SECONDS || 60) * 1000 * SCALE_SWEEP; // a table of 3+ starts if nobody new joins for this long
+const IDLE_START = Number(process.env.IDLE_START_SECONDS || 40) * 1000 * SCALE_SWEEP; // a table of 3+ starts if nobody new joins for this long
+const MAX_FILL = 90 * 1000 * SCALE_SWEEP;    // ...or once it has been filling this long, so nobody waits more than about 3 minutes in all
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 // Split n waiting players into tables as close to the target size as possible, never fewer than 3 or more than 5.
@@ -206,7 +207,7 @@ export class Lobby {
         await this.dropAway(t, AWAY_LIMIT);
         if (t.humans().length !== before) changed = true;
         await this.closeIfEmpty(t);
-        if (room.autoStart && t.stage === 'forming' && t.humans().length >= 3 && now - t.lastSeatChange > IDLE_START) { await t.begin('idle'); changed = true; }
+        if (room.autoStart && t.stage === 'forming' && t.humans().length >= 3 && (now - t.lastSeatChange > IDLE_START || now - t.openedAt > MAX_FILL)) { await t.begin('idle'); changed = true; }
       }
       if (changed) this.emitRoom(room);
     }

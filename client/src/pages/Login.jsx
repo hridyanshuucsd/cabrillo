@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib.js';
 import { useMe } from '../me.js';
 
-export const CONSENT = 'Cabrillo is a UC San Diego student project (COGS 123). In each session an AI reads the group chat to keep a summary of the plan. To learn how groups decide, we record what happens, such as messages, choices, and timing, under a code like P01 instead of your name. Please do not share personal information in chat. You can stop at any time.';
+export const CONSENT = 'Cabrillo is a UC San Diego student project (COGS 123). In each session an AI reads the group chat to keep a summary of the plan; chat messages may be processed by an outside AI service, with a code in place of your name. To learn how groups decide, we record what happens, such as messages, choices, and timing, under a code like P01 instead of your name. Please do not share personal information in chat. You can stop at any time.';
 
 export default function Login() {
   const { me, refresh } = useMe();
@@ -32,8 +32,8 @@ export default function Login() {
     <div className="wrap stack">
       <div className="brand"><span className="brand-mark" aria-hidden="true">C</span>Cabrillo</div>
       <div>
-        <h1>Make a group plan in 10 minutes, with an AI that listens.</h1>
-        <p className="muted">3 to 5 people plan something together in a group chat. A clearly labeled AI reads along, keeps a shared Plan so far, and asks a question now and then. Each person also holds one private limit. At the end, everyone sees whose limits made it into the plan.</p>
+        <h1>Make a group plan together, with an AI that listens.</h1>
+        <p className="muted">3 to 5 people plan something together in a group chat. A clearly labeled AI reads along, keeps the plan up to date above the chat, and asks a question now and then. Each person also holds one private limit. At the end, everyone sees whose limits made it into the plan.</p>
       </div>
       {me && <div className="card small">You are signed in as {me.name}. <Link to={next}>Continue</Link></div>}
       <div className="tabs" role="tablist">

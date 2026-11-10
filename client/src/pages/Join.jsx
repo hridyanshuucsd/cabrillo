@@ -51,7 +51,7 @@ export default function Join() {
       <div>
         <div className="label">Session {code}</div>
         <h1>Plan something with a small group, with an AI that listens.</h1>
-        <p className="muted" style={{ margin: 0 }}>You will be seated at a table of about 4 people. It takes about 10 minutes.</p>
+        <p className="muted" style={{ margin: 0 }}>You will be seated at a table of about 4 people. Most groups finish in about 10 minutes.</p>
       </div>
       <form className="card stack" onSubmit={submit}>
         <label className="field">Your first name

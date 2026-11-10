@@ -42,41 +42,48 @@ function student(i) {
   return (async () => {
     const cookie = cookieOf(await post('/api/guest', { name: `Student${String(i).padStart(2, '0')}`, consent: true }));
     const s = connect(cookie);
-    const st = { i, s, cookie, sessionId: null, last: null, sent: 0, states: 0, done: false, feedback: false };
+    const st = { i, s, cookie, sessionId: null, last: null, sent: 0, states: 0, done: false, feedback: false, picked: {} };
     s.on('game:start', ({ sessionId }) => { st.sessionId = sessionId; s.emit('game:join', { sessionId }); });
     s.on('game:state', (g) => {
       st.last = g; st.states++;
       const send = (ev, extra) => s.emit(ev, { sessionId: g.id, ...extra });
-      if (['setup', 'forming'].includes(g.stage) && !g.me.ready && !st.readyTimer) st.readyTimer = setTimeout(() => send('game:ready'), 2500 + Math.random() * 1500);
+      // briefing: some people swap their limit or write their own, then everyone taps Ready
+      if (['setup', 'forming'].includes(g.stage) && !g.me.ready && !st.readyTimer) {
+        if (i % 6 === 1) send('game:limit', { action: 'swap' });
+        if (i % 9 === 2) send('game:limit', { action: 'own', text: 'I need to be home by nine in the evening' });
+        st.readyTimer = setTimeout(() => send('game:ready'), 2500 + Math.random() * 1500);
+      }
       // student 5 closes the page as soon as the chat starts; their table must still be able to finish
       if (i === 5 && g.stage === 'chat' && !st.dropped) { st.dropped = true; st.done = true; s.close(); return; }
       if (g.stage === 'chat' && !st.chatting) {
         st.chatting = true;
-        const loop = async () => {
-          for (let k = 0; k < 5 && st.last?.stage === 'chat'; k++) {
+        (async () => {
+          for (let k = 0; k < 4 && st.last?.stage === 'chat'; k++) {
             await sleep(1500 + Math.random() * 3500);
             if (st.last?.stage !== 'chat') break;
             const f = g.task.fields[Math.floor(Math.random() * g.task.fields.length)];
             const opt = f.options[Math.floor(Math.random() * f.options.length)];
             send('game:chat', { text: `${TALK[k % TALK.length]} ${opt.name.toLowerCase()}` }); st.sent++;
-            if (k === 1 && Math.random() < 0.5) send('game:share');
+            if (k === 1 && i % 3 === 0) send('game:share', { mode: i % 2 ? 'named' : 'anon' });
+            if (k === 1 && i % 3 === 1) send('game:chat', { text: 'Here is my limit in my own words', limit: true });
             if (k === 2 && i % 7 === 0) send('game:chat', { text: '@AI what have we decided so far?' });
             if (k === 3 && i % 11 === 0 && g.task.fields.some((x) => x.id === 'where')) send('game:chat', { text: 'can you book an uber for us' });
           }
-          if (st.last?.stage === 'chat') send('game:confirm-ready');
-        };
-        loop();
+          st.converge = true; // after talking, go along with whatever has the most support
+        })();
       }
-      if (g.stage === 'confirm' && !g.deal) {
-        const missing = g.task.fields.filter((f) => !g.plan[f.id]);
-        const first = g.players.filter((p) => !p.isAI)[0]?.isYou;
-        if (missing.length && first) send('game:set', { field: missing[0].id, option: missing[0].options[0].id });
-        else if (!missing.length && !g.me.accepted) send('game:accept', { value: true });
-        // Approve any pending booking so it does not hang.
-        for (const b of g.bookings) if (b.status === 'pending' && b.mine === null) send('game:booking', { bookingId: b.id, value: true });
+      if (g.stage === 'chat' && !g.deal) {
+        for (const b of g.bookings) if (b.status === 'pending' && b.mine === null) send('game:booking', { bookingId: b.id, value: Math.random() < 0.85 });
+        if (st.converge) {
+          for (const f of g.panel) {
+            if (f.status === 'agreed') continue;
+            const target = f.options[0]?.option || g.task.fields.find((x) => x.id === f.id).options[0].id;
+            if (g.me.prefs[f.id] !== target && st.picked[f.id] !== target) { st.picked[f.id] = target; send('game:pick', { field: f.id, option: target }); setTimeout(() => { st.picked[f.id] = null; }, 1500); }
+          }
+          if (g.complete && !g.me.accepted) send('game:accept', { value: true, fits: true });
+        }
       }
-      if (g.stage === 'chat') for (const b of g.bookings) if (b.status === 'pending' && b.mine === null) send('game:booking', { bookingId: b.id, value: Math.random() < 0.8 });
-      if ((g.stage === 'wrap' || g.stage === 'done') && !st.feedback) {
+      if (g.stage === 'done' && !st.feedback) {
         st.feedback = true;
         post('/api/feedback', { sessionId: g.id, aiHelpful: 1 + Math.floor(Math.random() * 5), aiAmount: 'about_right', playAgain: 'yes' }, cookie);
       }
@@ -156,6 +163,9 @@ for (const f of ['sessions.csv', 'players.csv', 'logs.csv', 'feedback.csv']) {
   const want = f === 'sessions.csv' ? all.length : f === 'players.csv' ? all.reduce((a, t) => a + t.players.length, 0) : 1;
   check(`export ${f}`, r.ok && rows >= want, `(${rows} rows)`);
 }
+const logsCsv = await (await fetch(`${BASE}/api/export/${room.code}/logs.csv`, { headers: { cookie: hostCookie } })).text();
+const want = ['limit_changed', 'limit_shared', 'pick', 'plan_update', 'plan_complete', 'vote', 'deal_locked', 'session_outcome', 'limit_alert_private'];
+check('the new flow is in the research logs', want.every((e) => logsCsv.includes(e)), want.filter((e) => !logsCsv.includes(e)).join(', '));
 const sessionsCsv = await (await fetch(`${BASE}/api/export/${room.code}/sessions.csv`, { headers: { cookie: hostCookie } })).text();
 const playersCsv = await (await fetch(`${BASE}/api/export/${room.code}/players.csv`, { headers: { cookie: hostCookie } })).text();
 check('players.csv has no names', !/Student\d/.test(playersCsv) && !/Student\d/.test(sessionsCsv));
