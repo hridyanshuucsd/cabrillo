@@ -133,7 +133,7 @@ html.app-locked, html.app-locked body { position: fixed; inset: 0; overflow: hid
 .pchip-name { font-size: 11px; font-weight: 800; color: var(--ink2); text-transform: uppercase; letter-spacing: .04em; }
 .pchip-value { font-size: 13.5px; font-weight: 800; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pchip.open .pchip-value { color: var(--ink2); font-weight: 600; }
-.pchip-status { font-size: 11px; font-weight: 700; color: var(--ink2); }
+.pchip-status { font-size: 11px; font-weight: 700; color: var(--ink2); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pchip.agreed { background: var(--primary-tint); border-color: transparent; }
 .pchip.agreed .pchip-status { color: var(--primary-dark); }
 .pchip.split { border-color: #e5b3ab; }
@@ -165,7 +165,13 @@ html.app-locked, html.app-locked body { position: fixed; inset: 0; overflow: hid
 .typing-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line2); animation: blink 1.2s infinite; }
 .typing-dots i:nth-child(2) { animation-delay: .2s; } .typing-dots i:nth-child(3) { animation-delay: .4s; }
 @keyframes blink { 0%, 80%, 100% { opacity: .3; } 40% { opacity: 1; } }
-.new-below { z-index: 5; position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); border: 0; border-radius: 999px; background: var(--ink); color: #fff; font-weight: 800; font-size: 13px; padding: 8px 14px; box-shadow: var(--shadow); cursor: pointer; }
+/* "New messages" sits in its own strip under the list, so it never covers a message */
+.messages-wrap.has-new .messages { bottom: 36px; }
+.new-below { position: absolute; left: 12px; right: 12px; bottom: 2px; height: 32px; border: 0; border-radius: 10px; background: var(--ink); color: #fff; font-weight: 800; font-size: 13px; cursor: pointer; }
+.m-settled { align-self: stretch; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0 2px 36px; padding: 2px 4px 2px 12px; border-radius: 12px; background: var(--primary-tint); font-size: 13.5px; }
+.m-settled .linkbtn { padding: 4px 8px; min-height: 32px; }
+.plan-val { display: flex; flex-direction: column; align-items: flex-end; text-align: right; }
+.own-line { font-size: 12.5px; font-weight: 600; color: var(--ink2); }
 .booking { align-self: stretch; margin: 10px 0 4px; background: var(--surface); border: 1.5px solid var(--primary); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
 .booking-title { font-weight: 800; font-size: 15.5px; }
 .booking-split { font-size: 14.5px; }
@@ -290,7 +296,13 @@ html.app-locked, html.app-locked body { position: fixed; inset: 0; overflow: hid
 }
 @media (min-width: 720px) {
   .host-top { grid-template-columns: 1.1fr 1fr; }
-  .app { border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+  .app { max-width: 720px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+  /* a wide screen has no swipe: every part of the plan is visible, sharing the row */
+  .planbar { flex-direction: column; align-items: stretch; padding: 8px 12px; gap: 6px; }
+  .ai-status { align-self: flex-start; min-height: 26px; }
+  .planbar-scroll { overflow: visible; padding-right: 0; }
+  .pchip { flex: 1 1 0; min-width: 0; max-width: none; }
+  .pchip-name, .pchip-status { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   h1 { font-size: 28px; }
 }
 @media (prefers-reduced-motion: reduce) { .sheet, .spinner, .typing-dots i { animation: none; } .btn { transition: none; } }

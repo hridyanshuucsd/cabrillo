@@ -173,7 +173,7 @@ try {
   await shot(x, '08_pick_sheet');
   await x.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
   for (const [fl, op] of GOOD) { await tap(x, fl, op); await tap(y, fl, op); }
-  await x.getByRole('group', { name: /Every part of the plan has a choice: Old Town, Sunday afternoon, Bus or trolley, Under \$15/ }).first().waitFor({ timeout: 5000 });
+  await x.getByRole('group', { name: /Every part of the plan has a choice: Old Town, Sunday afternoon, Bus or trolley( \([^)]*\))?, Under \$15/ }).first().waitFor({ timeout: 5000 });
   check('the plan is what most of the table wants, and a plan card appears when it is complete', (await x.getByRole('button', { name: 'Accept this plan' }).count()) >= 1);
 
   // pause, ask, book
@@ -222,7 +222,7 @@ try {
   await say(u, '@AI how do we get to Old Town?');
   await u.getByText(/easy by trolley or bus/).first().waitFor({ timeout: 8000 });
   const uText = await body(u);
-  check('answer-only AI made no unprompted moves', !/Before anything is settled|Tap to pick\.|Heads up/.test(uText) && !(await u.getByText('Only you see this').count()) && !(await u.getByRole('button', { name: /^Me too/ }).count()));
+  check('answer-only AI made no unprompted moves', !/Quick check before|Tap to pick\.|Heads up/.test(uText) && !(await u.getByText('Only you see this').count()) && !(await u.getByRole('button', { name: /^Me too/ }).count()));
   await say(u, '@AI can you book an uber for us?');
   await u.getByRole('group', { name: /^Ride to / }).first().waitFor({ timeout: 6000 });
   check('answer-only AI answers and books only when asked', true);

@@ -1,0 +1,205 @@
+// A chat between one person and two AI players, replayed against the game logic directly (no browser).
+// It follows the conversation that exposed these problems: player codes shown instead of names, AI players that
+// repeat themselves and do not answer the question, a split way of getting there that the plan could not record,
+// and "Me too" offered where it would switch a pick. Runs three times: scripted lines (no key), a well-behaved
+// stand-in model, and a badly behaved one whose lines must never reach the chat.
+// Run: node tests/conversation.mjs        (add SHOW=1 to print every chat)
+import { startLocalDb } from '../scripts/localdb.js';
+
+const { pg, url } = await startLocalDb({ dir: '.convdb', port: 5442, fresh: true });
+process.env.DATABASE_URL = url;
+process.env.TIME_SCALE = '0.04';
+process.env.AI_SUMMARY = 'off';
+process.env.ROUTING = 'off';
+process.env.ANTHROPIC_API_KEY = ''; process.env.OPENAI_API_KEY = ''; process.env.AI_MODEL = '';
+await import('./helpers/fake-openai.mjs');
+const { migrate } = await import('../server/db.js');
+const { Table } = await import('../server/game.js');
+const { sameMessage } = await import('../server/listener.js');
+await migrate();
+
+const results = [];
+const check = (name, ok, extra = '') => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${ok ? '' : extra}`); };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (f, ms = 4000) => { const end = Date.now() + ms; while (Date.now() < end) { if (f()) return true; await sleep(25); } return !!f(); };
+const io = { to: () => ({ emit: () => {} }), sockets: { adapter: { rooms: { get: () => ({ size: 1 }) } } } };
+const CODE = /\b[pa]0\d\b/i;
+
+async function play(label, { key, bad, mode = 'listen' }) {
+  process.env.OPENAI_API_KEY = key ? 'test-key' : '';
+  process.env.FAKE_MODEL = bad ? 'bad' : '';
+  const room = { code: `C${label.length}${Date.now() % 1000}`, kind: 'quick', task: 'outing', autoStart: true };
+  const t = new Table({ io, room, humans: [{ key: 'u1', name: 'PQIUS', userId: null, isGuest: true }], mode, taskId: 'outing', number: 1 });
+  const [me, ari, kai] = t.players;
+  me.limitId = 'no_hike'; ari.limitId = 'sun_am_busy'; kai.limitId = 'no_car'; // Kai gets carsick: bus or trolley only
+  await t.start();
+  t.ready('u1');
+  const ck = (name, ok, extra) => check(`${label}: ${name}`, ok, extra);
+  const aiLines = () => t.chat.filter((m) => ['chat', 'limit'].includes(m.kind) && t.byCode(m.from)?.isAI);
+  const linesOf = (p) => aiLines().filter((m) => m.from === p.pcode).map((m) => m.text);
+  const since = (id) => aiLines().filter((m) => m.id > id);
+  // At an answer-only table words do not fill in the plan, so the person also taps what they said.
+  const say = async (text, wait = 900, tap) => { const id = t.seq; t.say('u1', text); if (tap && mode === 'ask') t.pick('u1', ...tap); await sleep(wait); return id; };
+  const row = (id) => t.panel().find((f) => f.id === id);
+
+  ck('two AI players, named Ari and Kai', ari.short === 'Ari' && kai.short === 'Kai' && ari.name === 'Ari (AI)');
+  await until(() => aiLines().length >= 2, 2500);
+  const open = aiLines().map((m) => m.text);
+  ck('both AI players say something when the chat opens, and not the same thing', open.length >= 2 && !sameMessage(open[0], open[1]) && !sameMessage(open[1], open[0]), JSON.stringify(open));
+  ck('AI players do not settle a part by themselves', t.panel().every((f) => f.status !== 'agreed'), JSON.stringify(t.plan));
+
+  let id = await say('what times work for you all?');
+  await until(() => since(id).length >= 1);
+  ck('"what times work for you all?" gets an answer about when', since(id).length >= 1 && (row('when').options.some((o) => o.who.some((c) => t.byCode(c).isAI)) || since(id).some((m) => /sunday|saturday|morning|afternoon/i.test(m.text))), JSON.stringify(since(id).map((m) => m.text)));
+
+  id = await say('sunday afternoon is good', 900, ['when', 'sun_pm']);
+  await until(() => row('when').status === 'agreed');
+  ck('a part is settled once the person backs it', row('when').status === 'agreed' && t.plan.when === 'sun_pm');
+
+  id = await say('tell me an exact hour');
+  await until(() => since(id).length >= 1);
+  ck('"tell me an exact hour" gets a clock time, not the settled option again', since(id).some((m) => /\b\d{1,2}(:\d\d)?\s*(am|pm)?\b/i.test(m.text)) && !since(id).some((m) => /^sunday afternoon works/i.test(m.text)), JSON.stringify(since(id).map((m) => m.text)));
+
+  id = await say('i can pick you all up', 900, ['travel', 'carpool']);
+  ck('"i can pick you all up" is read as carpool', t.prefs[me.pcode].travel === 'carpool');
+  await until(() => t.prefs[kai.pcode].travel === 'transit' && kai.revealed, 5000);
+  ck('Kai says once that it gets carsick and goes its own way', t.prefs[kai.pcode].travel === 'transit' && kai.revealed && linesOf(kai).some((x) => /carsick|bus|trolley/i.test(x)), JSON.stringify(linesOf(kai)));
+
+  id = await say('let Kai travel by trolley and others can come in my car', 1200);
+  ck('what is said about Kai is not counted as the writer\'s own pick', t.prefs[me.pcode].travel === 'carpool' && t.prefs[kai.pcode].travel === 'transit');
+  await until(() => row('travel').status === 'agreed');
+  ck('the plan records the split: Carpool, with Kai by bus or trolley', t.plan.travel === 'carpool' && t.ways.travel?.[kai.pcode] === 'transit', JSON.stringify([t.plan, t.ways]));
+  ck('the listening AI does not claim the plan breaks the limit Kai shared', !t.chat.some((m) => m.from === 'AI' && /does not fit/.test(m.text)));
+  ck('Kai\'s limit counts as respected with its own way', t.limitOf(kai).violates(t.planFor(kai, t.plan)) === false);
+
+  id = await say('kai? respond?', 1200);
+  await until(() => since(id).some((m) => m.from === kai.pcode));
+  ck('calling on an AI player by name gets a reply from that player', since(id).some((m) => m.from === kai.pcode), JSON.stringify(since(id).map((m) => `${m.name}: ${m.text}`)));
+  id = await say('a01 what do you think?', 1200);
+  await until(() => since(id).some((m) => m.from === ari.pcode));
+  ck('a player code typed by a person still reaches that AI player', since(id).some((m) => m.from === ari.pcode));
+
+  t.pick('u1', 'where', 'cove'); t.pick('u1', 'budget', 'low');
+  await until(() => !!t.plan.where && !!t.plan.budget, 5000);
+  await until(() => t.chat.some((m) => m.kind === 'plan'), 3000);
+  const card = t.chat.filter((m) => m.kind === 'plan').pop();
+  ck('the plan card names who goes their own way', !!card && /Carpool \(Kai: Bus or trolley\)/.test(card.text) && card.ways?.travel?.[0]?.name === 'Kai', card?.text);
+
+  // ----- the whole chat -----
+  const texts = t.chat.filter((m) => !m.to && m.from !== me.pcode).map((m) => m.text);
+  ck('no player code appears in anything the app or the AI players wrote', !texts.some((x) => CODE.test(x)), texts.filter((x) => CODE.test(x)).join(' | '));
+  ck('no emoji or long dash in what AI players wrote', !aiLines().some((m) => /[—–]|\p{Extended_Pictographic}/u.test(m.text)));
+  ck('AI player messages are short', aiLines().every((m) => m.text.length <= 150), JSON.stringify(aiLines().filter((m) => m.text.length > 150).map((m) => m.text)));
+  for (const p of [ari, kai]) {
+    const mine = linesOf(p);
+    const dup = mine.find((x, i) => mine.slice(0, i).some((y) => sameMessage(x, y)));
+    ck(`${p.short} never repeats itself`, !dup, `"${dup}" in ${JSON.stringify(mine)}`);
+  }
+  ck('no AI player says the plan is done while a part is open', !t.chat.some((m, i) => t.byCode(m.from)?.isAI && m.kind === 'chat' && /we'?re set|all set|sounds like a plan/i.test(m.text) && !t.chat.slice(0, i).some((x) => x.kind === 'plan')));
+  const follow = t.chat.filter((m) => m.kind === 'pick' && m.follow);
+  ck('AI players going along shows as one line, not one per player', !t.chat.some((m, i) => m.follow && t.chat[i - 1]?.follow) && follow.every((m) => !/\(AI\) is fine.*\(AI\) is fine/.test(m.text) || Object.keys(m.follow).length > 1), JSON.stringify(follow.map((m) => m.text)));
+  const mine = t.viewFor('u1').chat;
+  ck('"Me too" is never offered for a part the person already picked or that is settled', !mine.some((m) => (m.sup || []).some((x) => t.prefs[me.pcode][x.field] || row(x.field).status === 'agreed')));
+  const run = (() => { let best = 0, n = 0; for (const m of t.chat) { if (m.to || !['chat', 'limit', 'question', 'pick'].includes(m.kind)) continue; const w = t.byCode(m.from); if (w && !w.isAI) n = 0; else if (w && m.kind !== 'pick') best = Math.max(best, ++n); } return best; })();
+  ck('AI players never write more than three messages in a row', run <= 3, `${run} in a row`);
+
+  t.accept('u1', true);
+  await until(() => t.stage === 'done', 3000);
+  ck('the plan locks and respects all three limits', t.outcome?.deal && t.outcome.respected === 3, JSON.stringify(t.outcome));
+  ck('the locked plan keeps Kai\'s own way', t.deal?.ways?.travel?.[kai.pcode] === 'transit' && /Carpool \(Kai: Bus or trolley\)/.test(t.chat.filter((m) => m.kind === 'system').pop()?.text || ''));
+
+  if (process.env.SHOW) { console.log(`\n----- ${label}: the chat -----`); for (const m of t.chat) console.log(`${m.to ? '(private) ' : ''}${m.kind.padEnd(8)} ${String(m.name).padEnd(10)} ${m.text}`); console.log(''); }
+  return t;
+}
+
+// Two people who want different things, and one AI player: the AI player may not settle it for them.
+async function twoPeople(label, { key }) {
+  process.env.OPENAI_API_KEY = key ? 'test-key' : ''; process.env.FAKE_MODEL = '';
+  const room = { code: `D${Date.now() % 100000}`, kind: 'quick', task: 'outing', autoStart: true };
+  const t = new Table({ io, room, humans: [{ key: 'u1', name: 'Maya', userId: null, isGuest: true }, { key: 'u2', name: 'Dev', userId: null, isGuest: true }], mode: 'listen', taskId: 'outing', number: 1 });
+  const [maya, dev, ari] = t.players;
+  maya.limitId = 'budget15'; dev.limitId = 'no_hike'; ari.limitId = 'sun_am_busy';
+  await t.start(); t.ready('u1'); t.ready('u2');
+  const ck = (name, ok, extra) => check(`${label}: ${name}`, ok, extra);
+  const row = (id) => t.panel().find((f) => f.id === id);
+  const aiLines = () => t.chat.filter((m) => ['chat', 'limit'].includes(m.kind) && t.byCode(m.from)?.isAI);
+  await until(() => aiLines().length >= 1, 2000);
+  t.say('u1', 'old town for tacos sounds good'); await sleep(200);
+  t.say('u2', 'i would rather do balboa park'); await sleep(1500);
+  ck('two people who disagree: the part stays open, whatever the AI player said', row('where').status !== 'agreed' && !t.plan.where, JSON.stringify(row('where')));
+  const devAt = t.chat.find((x) => x.from === dev.pcode).id;
+  ck('the AI player does not take a side between them', !t.chat.some((m) => m.id > devAt && m.from === ari.pcode && /old town|balboa/i.test(m.text)) && !t.chat.some((m) => m.id > devAt && m.follow));
+  t.say('u2', 'ok fine, old town works for me too'); await until(() => row('where').status === 'agreed', 3000);
+  ck('once the people agree, the part is settled', t.plan.where === 'oldtown');
+  // getting there: each their own way, with no majority among the people
+  t.say('u1', 'i will take the trolley'); await sleep(200);
+  t.say('u2', 'i am driving'); await until(() => row('travel').status === 'agreed', 4000);
+  const tr = row('travel');
+  ck('a personal part settles once everyone has said their way, even when they differ', tr.status === 'agreed' && tr.own.length === 1 && !!t.prefs[ari.pcode].travel, JSON.stringify(tr));
+  ck('the plan lists who goes their own way', /\((Maya|Dev): (Bus or trolley|Carpool)\)/.test(t.planText(t.plan, t.ways)), t.planText(t.plan, t.ways));
+  ck('differing ways to get there are not posted as a disagreement to resolve', !t.chat.some((m) => m.from === 'AI' && m.poll === 'travel' && /What would work for everyone/.test(m.text)));
+  ck('no player code in the chat', !t.chat.some((m) => !m.to && CODE.test(m.text)));
+  if (process.env.SHOW) { console.log(`\n----- ${label}: the chat -----`); for (const m of t.chat) console.log(`${m.to ? '(private) ' : ''}${m.kind.padEnd(8)} ${String(m.name).padEnd(10)} ${m.text}`); console.log(''); }
+  t.hostAdvance();
+}
+
+// A person who says almost nothing: AI players keep things moving without taking over the chat.
+async function quiet(label) {
+  process.env.OPENAI_API_KEY = ''; process.env.FAKE_MODEL = '';
+  const room = { code: `Q${Date.now() % 100000}`, kind: 'quick', task: 'outing', autoStart: true };
+  const t = new Table({ io, room, humans: [{ key: 'u1', name: 'Sam', userId: null, isGuest: true }], mode: 'ask', taskId: 'outing', number: 1 });
+  await t.start(); t.ready('u1');
+  const ck = (name, ok, extra) => check(`${label}: ${name}`, ok, extra);
+  await sleep(1200);
+  t.say('u1', 'hi');
+  await sleep(6000); // two and a half minutes of chat time
+  const ai = t.chat.filter((m) => ['chat', 'limit'].includes(m.kind) && t.byCode(m.from)?.isAI);
+  const after = ai.filter((m) => m.id > t.chat.find((x) => x.text === 'hi').id);
+  ck('AI players nudge a quiet chat', after.length >= 1, JSON.stringify(ai.map((m) => m.text)));
+  ck('but never more than three messages in a row', after.length <= 3, JSON.stringify(after.map((m) => m.text)));
+  ck('and nothing is settled without the person', t.panel().every((f) => f.status !== 'agreed'));
+  if (process.env.SHOW) { console.log(`\n----- ${label}: the chat -----`); for (const m of t.chat) console.log(`${m.kind.padEnd(8)} ${String(m.name).padEnd(10)} ${m.text}`); console.log(''); }
+  t.hostAdvance();
+}
+
+// A person who wants what an AI player's limit rules out, for a part the whole group shares.
+async function clash(label) {
+  process.env.OPENAI_API_KEY = ''; process.env.FAKE_MODEL = '';
+  const room = { code: `K${Date.now() % 100000}`, kind: 'quick', task: 'outing', autoStart: true };
+  const t = new Table({ io, room, humans: [{ key: 'u1', name: 'Sam', userId: null, isGuest: true }], mode: 'listen', taskId: 'outing', number: 1 });
+  const [sam, ari, kai] = t.players;
+  sam.limitId = 'no_hike'; ari.limitId = 'works_sat'; kai.limitId = 'budget15';
+  await t.start(); t.ready('u1');
+  const ck = (name, ok, extra) => check(`${label}: ${name}`, ok, extra);
+  await sleep(900);
+  t.say('u1', 'saturday morning works best for me');
+  await until(() => ari.revealed, 4000);
+  const mine = () => t.chat.filter((m) => m.from === ari.pcode && ['chat', 'limit'].includes(m.kind)).map((m) => m.text);
+  ck('the AI player whose limit is in the way says so, once, with another option', ari.revealed && mine().filter((x) => /saturday/i.test(x)).length === 1, JSON.stringify(mine()));
+  await until(() => t.plan.when === 'sat_am', 4000);
+  await until(() => t.chat.some((m) => m.from === 'AI' && /does not fit the limit Ari shared/.test(m.text)), 4000);
+  ck('the listening AI speaks up for the limit the AI player shared, by first name', t.chat.some((m) => m.from === 'AI' && /does not fit the limit Ari shared/.test(m.text)), JSON.stringify(t.plan));
+  const n = mine().length;
+  t.say('u1', 'saturday morning please'); await sleep(1200);
+  t.say('u1', 'saturday morning it is'); await sleep(1200);
+  ck('the AI player objects at most once more, and does not nag', mine().length <= n + 1, JSON.stringify(mine()));
+  ck('the AI player keeps to its limit: it never picks Saturday', !['sat_am', 'sat_pm'].includes(t.prefs[ari.pcode]?.when));
+  if (process.env.SHOW) { console.log(`\n----- ${label}: the chat -----`); for (const m of t.chat) console.log(`${m.to ? '(private) ' : ''}${m.kind.padEnd(8)} ${String(m.name).padEnd(10)} ${m.text}`); console.log(''); }
+  t.hostAdvance();
+}
+
+try {
+  await twoPeople('two people, scripted', { key: false });
+  await twoPeople('two people, model', { key: true });
+  await quiet('quiet person');
+  await clash('clash with an AI player');
+  await play('scripted', { key: false });
+  await play('model', { key: true });
+  await play('bad model', { key: true, bad: true });
+  await play('answer-only table', { key: false, mode: 'ask' });
+} catch (e) { console.error(e); results.push(false); }
+await sleep(300);
+await pg.stop();
+const failed = results.filter((x) => !x).length;
+console.log(failed ? `${failed} of ${results.length} conversation checks failed` : `All ${results.length} conversation checks passed.`);
+process.exit(failed ? 1 : 0);

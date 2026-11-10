@@ -136,7 +136,8 @@ export function RideCard({ b, send, offset }) {
           {statusChip(b, 'Booked (demo)')}
         </div>
 
-        {b.status === 'asking' && <><PrivateAnswer b={b} send={send} /><Progress b={b} /></>}
+        {b.riderNames && <div className="small muted">This ride is for {b.riderNames.join(', ')}. The others get there another way.</div>}
+        {b.status === 'asking' && <>{b.rider !== false && <PrivateAnswer b={b} send={send} />}<Progress b={b} /></>}
 
         {b.status === 'booked' && ph && (
           <div className="ride-live" aria-live="polite">
@@ -220,7 +221,7 @@ function RouteCard({ m }) {
 
 // ---------- the complete plan, ready to accept ----------
 export function PlanCard({ g, m, onAccept }) {
-  const live = JSON.stringify(m.plan) === JSON.stringify(g.plan) && !g.deal;
+  const live = JSON.stringify(m.plan) === JSON.stringify(g.plan) && JSON.stringify(m.ways || {}) === JSON.stringify(g.ways || {}) && !g.deal;
   const humans = g.players.filter((p) => !p.isAI);
   const accepted = humans.filter((p) => p.accepted).length;
   return (
@@ -228,7 +229,8 @@ export function PlanCard({ g, m, onAccept }) {
       <div className="card-ai-body">
         <div className="row between"><strong>{live ? 'The plan is ready' : 'An earlier plan'}</strong>{live && <span className="chip ok">{accepted} of {humans.length} accepted</span>}</div>
         {g.task.fields.map((f) => (
-          <div key={f.id} className="plan-line"><span className="small muted">{f.name}</span><strong>{f.options.find((o) => o.id === m.plan[f.id])?.name}</strong></div>
+          <div key={f.id} className="plan-line"><span className="small muted">{f.name}</span><strong className="plan-val">{f.options.find((o) => o.id === m.plan[f.id])?.name}
+            {m.ways?.[f.id]?.length > 0 && <span className="own-line">{m.ways[f.id].map((x) => `${x.name}: ${x.optionName}`).join(' · ')}</span>}</strong></div>
         ))}
         {live
           ? <><button className={`btn block ${g.me.accepted ? 'ghost' : ''}`} onClick={onAccept}>{g.me.accepted ? 'Take back my acceptance' : 'Accept this plan'}</button>

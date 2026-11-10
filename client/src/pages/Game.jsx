@@ -7,6 +7,9 @@ import { MapCard, RideCard, TableCard, PlanCard } from '../components/Cards.jsx'
 // The flow is three steps: Briefing (your table fills while you read the task and your private limit),
 // Chat (no timer; the plan locks when everyone accepts it), and Results.
 const STATUS = { open: 'Open', split: 'Undecided', leaning: 'Leaning', agreed: 'Most agree' };
+// "Kai: Bus or trolley": who goes their own way for a part where people may differ (Getting there).
+const ownText = (own) => (own.length > 2 ? `${own.length} go their own way` : own.map((x) => `${x.name}: ${x.optionName}`).join(', '));
+const OwnLine = ({ own }) => (own?.length ? <span className="own-line">{own.map((x) => `${x.name}: ${x.optionName}`).join(' · ')}</span> : null);
 
 // ---------- phone viewport ----------
 // The chat screen is pinned to the visual viewport: the part of the screen above the on-screen keyboard.
@@ -238,7 +241,7 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
       </header>
       {!online && <Offline />}
       {!keyboard && <Board g={g} open={setSheet} />}
-      <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} followUp={() => setAsk('private')} onAccept={() => {
+      <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} followUp={() => setAsk('private')} openField={(id) => setSheet({ type: 'field', id })} onAccept={() => {
         if (g.me.accepted) return send('game:accept', { value: false });
         if (g.me.limit.custom || g.me.limit.ok === false) return setSheet({ type: 'accept' });
         send('game:accept', { value: true });
@@ -271,7 +274,7 @@ function Board({ g, open }) {
             <button key={f.id} className={`pchip ${f.status}`} onClick={() => open({ type: 'field', id: f.id })} aria-label={`${f.name}: ${f.leaderName || 'open'}. Tap to pick.`}>
               <span className="pchip-name">{f.name}</span>
               <span className="pchip-value">{f.leaderName || 'Tap to pick'}</span>
-              <span className="pchip-status">{f.status === 'open' ? 'Open' : f.status === 'agreed' ? 'Most agree' : f.status === 'split' ? 'Undecided' : `${f.count} of ${g.players.length} so far`}</span>
+              <span className="pchip-status">{f.status === 'open' ? 'Open' : f.status === 'agreed' ? (f.own?.length ? ownText(f.own) : 'Most agree') : f.status === 'split' ? 'Undecided' : `${f.count} of ${g.players.length} so far`}</span>
             </button>
           ))}
         </div>
@@ -311,7 +314,9 @@ function FieldSheet({ g, send, id, onClose }) {
   const row = g.panel.find((f) => f.id === id);
   return (
     <Sheet title={row?.name || 'Pick'} onClose={onClose}>
-      <p className="small muted" style={{ margin: 0 }}>Tap what you want. It counts the same as saying it in the chat, and your group sees it. The plan takes what most of the table wants.</p>
+      <p className="small muted" style={{ margin: 0 }}>{row?.personal
+        ? 'Tap how you will do this. Each person can go their own way here: the plan shows what most people picked and lists anyone who differs.'
+        : 'Tap what you want. It counts the same as saying it in the chat, and your group sees it. The plan takes what most of the table wants.'}</p>
       <Options g={g} send={send} id={id} />
       <div className="row between"><span className={`chip ${row?.status === 'agreed' ? 'ok' : ''}`}>{STATUS[row?.status || 'open']}</span><button className="btn small" onClick={onClose}>Done</button></div>
     </Sheet>
@@ -403,7 +408,7 @@ function InfoSheet({ g, send, onClose, humans }) {
 
 // Shown when the AI is waiting for a private answer from you (which rides or times work), so it does not scroll away.
 function Waiting({ g }) {
-  const b = (g.bookings || []).find((x) => x.status === 'asking' && x.mine === null);
+  const b = (g.bookings || []).find((x) => x.status === 'asking' && x.mine === null && x.rider !== false);
   if (!b) return null;
   return (
     <button className="todo-bar" onClick={() => document.getElementById(`booking-${b.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })}>
@@ -452,7 +457,7 @@ function AcceptSheet({ g, send, onClose, open }) {
   const go = (fits) => { send('game:accept', { value: true, fits }); onClose(); };
   return (
     <Sheet title="Accept this plan?" onClose={onClose}>
-      <div className="plan-row">{g.task.fields.map((f) => <div key={f.id} className="row between"><span className="small muted">{f.name}</span><strong>{f.options.find((o) => o.id === g.plan[f.id])?.name}</strong></div>)}</div>
+      <div className="plan-row">{g.task.fields.map((f) => <div key={f.id} className="row between"><span className="small muted">{f.name}</span><strong className="plan-val">{f.options.find((o) => o.id === g.plan[f.id])?.name}<OwnLine own={g.ways?.[f.id]} /></strong></div>)}</div>
       <div className="limit-body">{l.text}</div>
       {l.custom ? (
         <>
@@ -472,14 +477,16 @@ function AcceptSheet({ g, send, onClose, open }) {
 }
 
 // ---------- messages and the message box ----------
-function Messages({ g, send, typers, sayMyself, share, onAccept, followUp }) {
+function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openField }) {
   const box = useRef(null);
   const atBottom = useRef(true);
-  const [newBelow, setNewBelow] = useState(false);
+  const [newBelow, setNewBelow] = useState(0); // messages that arrived while you were reading further up
+  const seenId = useRef(0);
   const last = g.chat[g.chat.length - 1];
   useLayoutEffect(() => {
     const el = box.current; if (!el) return;
-    if (atBottom.current || last?.from === g.me.pcode) { el.scrollTop = el.scrollHeight; setNewBelow(false); } else setNewBelow(true);
+    if (atBottom.current || last?.from === g.me.pcode) { el.scrollTop = el.scrollHeight; setNewBelow(0); seenId.current = last?.id || 0; }
+    else setNewBelow(g.chat.filter((m) => m.id > seenId.current).length);
   }, [last?.id, g.bookings, g.maps?.length, typers.length]);
   // keep the newest message in view when the keyboard opens and the list gets shorter
   useEffect(() => {
@@ -490,8 +497,8 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp }) {
   const byCode = Object.fromEntries(g.players.map((p) => [p.pcode, p]));
   const unshared = g.me.limit.sharedAt === null;
   return (
-    <div className="messages-wrap">
-      <div className="messages" ref={box} aria-live="polite" onScroll={(e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; if (atBottom.current) setNewBelow(false); }}>
+    <div className={`messages-wrap ${newBelow ? 'has-new' : ''}`}>
+      <div className="messages" ref={box} aria-live="polite" onScroll={(e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; if (atBottom.current) { setNewBelow(0); seenId.current = last?.id || 0; } }}>
         {g.chat.map((m, i) => {
           if (m.kind === 'booking') {
             const b = (g.bookings || []).find((x) => x.id === m.bookingId);
@@ -506,6 +513,14 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp }) {
           const first = !prev || prev.from !== m.from || ['system', 'booking', 'map', 'pick', 'plan'].includes(prev.kind) || m.kind !== prev.kind;
           const p = byCode[m.from];
           if (m.kind === 'ai' || m.kind === 'private') {
+            // A question about one part that has since been settled folds to one line, so old polls do not look open.
+            const pr = m.poll && m.kind === 'ai' && !m.answer ? g.panel.find((f) => f.id === m.poll) : null;
+            if (pr?.status === 'agreed') return (
+              <div key={m.id} className="m-settled">
+                <span><span className="muted">{pr.name}:</span> <strong>{pr.leaderName}</strong>{pr.own?.length ? <span className="muted"> ({ownText(pr.own)})</span> : null}</span>
+                {!g.deal && <button className="linkbtn" onClick={() => openField(pr.id)}>Change</button>}
+              </div>
+            );
             return (
               <div key={m.id} className={`m-row ai ${first ? 'first' : ''}`}>
                 {first ? <span className="avatar ai" aria-hidden="true">AI</span> : <span className="avatar-gap" />}
@@ -523,7 +538,7 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp }) {
           }
           const label = m.kind === 'limit' ? 'shared a limit' : m.kind === 'question' ? (m.private ? 'asked the AI privately' : 'asked the AI') : null;
           // "Me too": the options this message asked for that you have not picked yet (listening tables).
-          const more = !mine && !g.deal && m.sup ? m.sup.filter((x) => g.me.prefs[x.field] !== x.option) : [];
+          const more = !mine && !g.deal && m.sup ? m.sup : []; // the server sends only what would add a pick for you
           const optName = (x) => g.task.fields.find((f) => f.id === x.field)?.options.find((o) => o.id === x.option)?.name;
           return (
             <div key={m.id} className={`m-row ${mine ? 'mine' : ''} ${first ? 'first' : ''}`}>
@@ -539,7 +554,7 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp }) {
         })}
         {typers.length > 0 && <div className="typing" aria-live="off"><span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>{typers.length === 1 && typers[0] === 'The AI' ? 'The AI is working on an answer' : `${typers.join(', ')} ${typers.length === 1 ? 'is' : 'are'} typing`}</div>}
       </div>
-      {newBelow && <button className="new-below" onClick={() => { box.current.scrollTop = box.current.scrollHeight; setNewBelow(false); }}>New messages</button>}
+      {newBelow > 0 && <button className="new-below" onClick={() => { box.current.scrollTop = box.current.scrollHeight; setNewBelow(0); }}>{newBelow === 1 ? '1 new message' : `${newBelow} new messages`} <span aria-hidden="true">↓</span></button>}
     </div>
   );
 }
@@ -645,7 +660,7 @@ function Results({ g }) {
       </header>
       <section className={`result-card ${g.deal ? 'good' : ''}`}>
         <span className="small">{g.deal ? `Everyone accepted after ${msToClock(g.deal.t)}.` : 'The chat ended before everyone accepted a complete plan.'}</span>
-        {g.task.fields.map((f) => <div key={f.id} className="row between"><span className="muted small">{f.name}</span><strong>{name(f)}</strong></div>)}
+        {g.task.fields.map((f) => <div key={f.id} className="row between"><span className="muted small">{f.name}</span><strong className="plan-val">{name(f)}<OwnLine own={g.ways?.[f.id]} /></strong></div>)}
       </section>
       {o && (
         <div className="stats">

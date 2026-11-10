@@ -174,7 +174,7 @@ export function parseAnswer(raw, task) {
 // ---------- @AI questions ----------
 function context(ctx) {
   const t = ctx.task;
-  const fields = t.fields.map((f) => `- ${f.name} (part id ${f.id}): ${f.options.map((x) => x.name).join(', ')}`).join('\n');
+  const fields = t.fields.map((f) => `- ${f.name} (part id ${f.id}${f.personal ? '; each person may choose their own, so people can differ here' : ''}): ${f.options.map((x) => x.name).join(', ')}`).join('\n');
   const info = t.info.map((i) => `- ${i.text}`).join('\n');
   return `Task for the group: ${t.prompt}
 Parts of the plan and their options:
@@ -183,7 +183,7 @@ Game information:
 ${info}
 Plan so far (from the chat and taps):
 ${ctx.summary}
-${ctx.facts ? `What the app knows about the options:\n${ctx.facts}\n` : ''}Recent chat, including earlier questions to the AI and its answers (people appear as codes such as P01; AI players as A01; the AI as AI; newest last):
+${ctx.facts ? `What the app knows about the options:\n${ctx.facts}\n` : ''}Recent chat, including earlier questions to the AI and its answers (people appear as codes such as P01; AI players, who fill empty seats, by first name; the AI as AI; newest last):
 ${ctx.recent || '(nothing yet)'}`;
 }
 
@@ -196,7 +196,7 @@ Rules:
 - You cannot see anyone's private limit unless it was shared in the chat. Never guess one.
 - Prices, times, schedules and limits in this game are invented: for those, use only the information given. You may use common knowledge about real places and the world.
 - You cannot browse. For live information (today's weather, hours right now, current prices), say you cannot check it live and give general guidance.
-- People appear as codes such as P01 or A02. Refer to people only by code.
+- People appear as codes such as P01, and AI players by first name. When you mention a person, write the code exactly as given (for example P01); never invent a name.
 - Plain language. No emojis, no em dashes, no contractions. Keep "text" to at most 3 sentences; put detail in blocks.
 - Use earlier questions and answers in the chat for follow-ups ("what about the second one").
 - For pros and cons or a comparison, use one compare block. Compare only the options asked about; "the top two" means the two options with the most support so far.
@@ -244,49 +244,69 @@ export const wantsCompare = (q) => COMPARE_RE.test(q);
 const HEARING = `You are the AI in Cabrillo. You listen to a small group chat while the group makes one plan, and you keep one line above the chat that says what you are hearing.
 Write ONE sentence of at most 22 words: what the group seems to want so far and what is still open or in conflict.
 Include ideas people raised even if they are not on the option list. Do not give advice, do not take a side, do not invent anything.
-Refer to people by their codes exactly as written (for example P01). Plain language, no emojis, no em dashes, no contractions.`;
+People appear as codes such as P01, and AI players by first name: write them exactly as given. Plain language, no emojis, no em dashes, no contractions.`;
 
 // Returns null without a key, when the model is busy, or on any failure; the caller then keeps its rule-based line.
 export async function summarize(ctx) {
   try {
     const t = ctx.task;
-    const r = await chat(HEARING, `Task: ${t.prompt}\nParts of the plan and their options:\n${t.fields.map((f) => `- ${f.name}: ${f.options.map((x) => x.name).join(', ')}`).join('\n')}\nTally so far: ${ctx.summary}\nRecent chat (newest last):\n${ctx.recent}`, 80, { low: true });
+    const r = await chat(HEARING, `Task: ${t.prompt}\nParts of the plan and their options:\n${t.fields.map((f) => `- ${f.name}${f.personal ? ' (each person may choose their own)' : ''}: ${f.options.map((x) => x.name).join(', ')}`).join('\n')}\nTally so far: ${ctx.summary}\nRecent chat (newest last):\n${ctx.recent}`, 80, { low: true });
     const text = r?.text?.replace(/\s+/g, ' ').replace(/^["']|["']$/g, '').trim();
     return text && text.length <= 240 ? { text, source: r.source } : null;
   } catch (e) { console.error('AI summary failed:', e.message); return null; }
 }
 
 // ---------- AI players ----------
-// An AI player is a labeled seat filler that chats like a relaxed classmate. The model only writes the words and says
-// which options the player now wants; the app checks every pick against the player's limit before it counts.
-const PLAYER = `You are playing one member of a small college group chat. The others can see you are an AI player, so never claim to be human, but talk like a relaxed college student texting friends.
-Write ONE short message (at most 16 words). Casual: lowercase is fine, contractions are fine, "tbh", "ngl", "lol" are fine sometimes. No emojis, no em dashes, no hashtags.
-Reply to the newest message when there is one: answer a question if you can, react to an idea, or ask a short follow-up. Sound like a person, not a form ("sunday afternoon works, mornings i have practice" is good; "I would like Sunday afternoon for when" is bad).
-Do not repeat or reword what someone else just said, and never repeat yourself. If you agree, say so in a few words and add one new thing: a reason, a small detail, or a question.
-Stick to the options given for each part of the plan. Do not invent exact clock times, meeting spots, prices or places that are not in the options.
-People are written as codes like P01 or A02. Do not invent names; you may refer to someone by their code.
-Stay consistent with what you want and with your limit. Only bring up your limit if it matters right now or someone asked about limits.
-Answer with JSON only: {"text": "...", "picks": {"<part id>": "<option id>"}, "mentions_limit": true or false}. "picks" lists only options your message says you want; use the ids given.`;
+// An AI player is a labeled seat filler that chats like a relaxed classmate. The app decides what the player does on
+// its turn (answer a question, agree, say its limit, nudge an open part) and what it may pick; the model only words
+// it. Every line is checked again by the app before it is posted (see Table.aiPlayerSpeak).
+const PLAYER = `You write the chat messages of one AI player in a small group chat of college students who are making a plan together. An AI player is a clearly labeled stand-in that fills an empty seat. Everyone can see the label, so never pretend to be human, and do not mention being an AI unless someone asks.
 
+Voice: a relaxed college student texting friends. Short, specific, natural. Lowercase is fine. Light slang at most ("tbh", "lowkey", "down"), and not in every message. No emojis, no em dashes, no hashtags.
+
+Every message:
+- Does exactly what "Your move" says and nothing else. One message, one point, at most 14 words.
+- Is new. Never repeat or reword your earlier messages or what someone else just said. If you only agree, two or three words are enough ("works for me", "same", "i'm down").
+- Leaves settled parts alone. Do not bring up a part listed under "Settled" unless your move is about it.
+- Is honest about the plan. Never say the plan is done, set or sorted while anything is listed under "Still open".
+- Uses the plan's options. If someone asks for a detail the options do not cover (an exact hour, a meeting spot), suggest one that fits what is settled.
+- Names people correctly. People appear as codes such as P01. If you mention a person, write the code exactly (P01), never a made-up name. Other AI players appear by first name. Most messages need no name at all.
+
+Reply with JSON only: {"text": "...", "picks": {"<part id>": "<option id>"}, "mentions_limit": true or false}
+"picks": options your message says you want for yourself, using the ids given; leave it empty if the message states no choice. "mentions_limit": true only when the message tells the group about your private limit.`;
+
+const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu;
+// One short chat line: no quotes around it and no emojis.
+export function tidyLine(text) {
+  let t = str(text, 240).replace(EMOJI, '').replace(/^["'“”]+|["'“”]+$/g, '').replace(/\s+/g, ' ').trim();
+  // Too long: keep the first sentence if that is a whole thought, otherwise drop the line (never cut mid-sentence).
+  if (t.length > 140) { const end = t.search(/[.?!](\s|$)/); t = end >= 12 && end < 140 ? t.slice(0, end + 1) : ''; }
+  return t;
+}
+
+// ctx: task, name, persona, settled, open, wants, limit, shared, fits, recent, said (own earlier lines), move.
 export async function playerLine(ctx) {
   try {
     const t = ctx.task;
-    const parts = t.fields.map((f) => `- ${f.id} (${f.name}): ${f.options.map((o) => `${o.id} = ${o.name}`).join('; ')}`).join('\n');
-    const user = `Task: ${t.prompt}
-Parts of the plan, with option ids:
+    const parts = t.fields.map((f) => `- ${f.name} [${f.id}]${f.personal ? ' (each person may go their own way)' : ''}: ${f.options.map((o) => `${o.name} [${o.id}]`).join('; ')}`).join('\n');
+    const user = `You are ${ctx.name}. ${ctx.persona}
+The task: ${t.prompt}
+Parts of the plan and their options (ids in brackets):
 ${parts}
-You are ${ctx.me}. What you would like: ${ctx.wants || 'nothing in particular, you are easygoing'}.
-Your private limit: "${ctx.limit}". ${ctx.shared ? 'You already told the group about it.' : 'You have not told the group yet.'}
-${ctx.goingAlong ? `You are fine going along with: ${ctx.goingAlong}.` : ''}
-Plan so far: ${ctx.summary}
+Settled: ${ctx.settled || 'nothing yet'}
+Still open: ${ctx.open || 'nothing; every part has a choice'}
+What you would pick: ${ctx.wants || 'nothing in particular, you are easygoing'}
+Your private limit: "${ctx.limit}" ${ctx.shared ? 'You have already told the group.' : 'The group does not know it yet.'}${ctx.fits === false ? ' The plan so far breaks it.' : ''}
 Recent chat (newest last):
 ${ctx.recent || '(nobody has said anything yet)'}
-${ctx.instruction}`;
+Your earlier messages (never repeat or reword these):
+${ctx.said?.length ? ctx.said.map((x) => `- ${x}`).join('\n') : '(none yet)'}
+Your move: ${ctx.move}`;
     const r = await chat(PLAYER, user, 120, { json: true });
     if (!r?.text) return null;
     const j = jsonObjects(unfence(r.text)).find((o) => typeof o.value?.text === 'string')?.value;
     if (!j) return null;
-    const text = str(j.text, 200);
+    const text = tidyLine(j.text);
     if (!text) return null;
     return { text, picks: j.picks && typeof j.picks === 'object' ? j.picks : {}, mentionsLimit: !!j.mentions_limit, source: r.source };
   } catch (e) { console.error('AI player line failed:', e.message); return null; }

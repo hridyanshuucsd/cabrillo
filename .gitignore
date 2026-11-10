@@ -10,3 +10,5 @@ test-shots
 .cardsdb/
 .aidb/
 .analyticsdb/
+.convdb
+.shotdb

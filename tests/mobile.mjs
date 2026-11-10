@@ -131,7 +131,7 @@ try {
   // the three ways to share, and the draft in the message box
   await a.getByRole('button', { name: 'Your private limit' }).click();
   await audit(a, 'se_17_limit_sheet');
-  await a.getByRole('button', { name: /^Say it myself/ }).click();
+  await a.getByRole('dialog').getByRole('button', { name: /^Say it myself/ }).click(); // a private heads-up in the chat can offer the same button
   await a.getByText('Draft of your limit').waitFor();
   await audit(a, 'se_18_limit_draft', { composer: true, share: 0.4 });
   await a.getByRole('button', { name: 'Send', exact: true }).click();

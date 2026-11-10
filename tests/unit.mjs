@@ -1,5 +1,5 @@
 // Fast checks of the pure logic: how the chat is read, and how model replies are parsed. Run: node tests/unit.mjs
-import { applyMessage, statesWish, topicOf } from '../server/listener.js';
+import { applyMessage, statesWish, topicOf, buildPanel, sameMessage } from '../server/listener.js';
 import { taskById } from '../server/tasks.js';
 import { parseAnswer, jsonObjects } from '../server/ai.js';
 const results = [];
@@ -30,6 +30,35 @@ check('"a hike is out for me" drops a hike pick', !read('I hurt my ankle last we
 check('a question about time is about When', topicOf(t, 'okay, what time tho?') === 'when');
 check('a statement is not a question to the group', topicOf(t, 'I love Old Town') === null);
 check('statesWish: plain statement', statesWish('sunday works for me'));
+
+// whole words only, and what is said about someone else
+for (const [text, want] of [
+  ["i'm busy on saturday", {}],                       // "busy" is not "bus"
+  ['max $100 for me', {}],                            // "$100" is not "$10"
+  ['i can pick you all up', { travel: 'carpool' }],
+  ['i have a car', { travel: 'carpool' }],
+  ["i don't have a car", {}],
+  ['we can get there by buses', { travel: 'transit' }],
+  ['what times work for you all?', {}],
+]) { const r = read(text); check(`reads "${text}"`, JSON.stringify(r.prefs) === JSON.stringify(want), JSON.stringify(r)); }
+const people = [{ pcode: 'A2', names: ['kai'] }, { pcode: 'P2', names: ['maya'] }];
+const about = (text) => { const prefs = { P1: {} }; const ch = applyMessage(t, prefs, 'P1', text, people); return { mine: prefs.P1, about: ch.filter((c) => c.kind === 'about_other').map((c) => `${c.about}:${c.option}`) }; };
+let r2 = about('let Kai travel by trolley and others can come in my car');
+check('"let Kai travel by trolley and others can come in my car"', r2.mine.travel === 'carpool' && r2.about.join() === 'A2:transit', JSON.stringify(r2));
+r2 = about("i'll drive and maya can take the bus");
+check('"i\'ll drive and maya can take the bus"', r2.mine.travel === 'carpool' && r2.about.join() === 'P2:transit', JSON.stringify(r2));
+check('"me and kai will take the trolley" includes the writer', about('me and kai will take the trolley').mine.travel === 'transit');
+check('"kai is right, the bus is easiest" is the writer agreeing', about('kai is right, the bus is easiest').mine.travel === 'transit');
+check('a request is a question about its part', topicOf(t, 'tell me an exact hour') === 'when' && topicOf(t, 'what times work for you all?') === 'when');
+check('sameMessage spots a reworded repeat', sameMessage('sunday afternoon works for me', 'sunday afternoon? saturdays i work') && !sameMessage('2 pm?', 'sunday afternoon works'));
+// AI players never settle a part or break a tie between people
+const seats = [{ pcode: 'P1' }, { pcode: 'A1', isAI: true }, { pcode: 'A2', isAI: true }];
+check('two AI players alone do not settle a part', buildPanel(t, { A1: { when: 'sun_pm' }, A2: { when: 'sun_pm' } }, seats)[1].status === 'leaning');
+check('a person plus an AI player do', buildPanel(t, { P1: { when: 'sun_pm' }, A2: { when: 'sun_pm' } }, seats)[1].status === 'agreed');
+const two = [{ pcode: 'P1' }, { pcode: 'P2' }, { pcode: 'A1', isAI: true }];
+check('an AI player does not break a tie between two people', buildPanel(t, { P1: { where: 'cove' }, P2: { where: 'balboa' }, A1: { where: 'cove' } }, two)[0].status !== 'agreed');
+const tr = buildPanel(t, { P1: { travel: 'carpool' }, A1: { travel: 'carpool' }, A2: { travel: 'transit' } }, seats)[2];
+check('getting there: the one who differs goes their own way', tr.status === 'agreed' && tr.leader === 'carpool' && tr.own.length === 1 && tr.own[0].pcode === 'A2');
 
 // model replies
 const list = { type: 'list', title: 'What to bring', items: ['Water', 'Sunscreen'] };

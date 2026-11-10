@@ -2,7 +2,7 @@
 // Limits are dealt one per seat. At least one plan respects every limit, so the group can always succeed.
 // Places are real San Diego names, but all limits, prices, and times are invented for the game.
 
-import { SCENARIOS } from './scenarios.js';
+import { SCENARIOS, TRAVEL } from './scenarios.js';
 
 const o = (id, name, kw) => ({ id, name, kw });
 
@@ -13,10 +13,10 @@ export const TASKS = {
     short: 'Weekend outing',
     prompt: 'Your group has a free weekend. Agree on one outing that works for everyone.',
     fields: [
-      { id: 'where', name: 'Where', options: [o('cove', 'La Jolla Cove', ['cove', 'la jolla', 'beach', 'seals']), o('balboa', 'Balboa Park', ['balboa', 'museum']), o('oldtown', 'Old Town', ['old town', 'oldtown', 'tacos']), o('torrey', 'Torrey Pines hike', ['torrey', 'hike', 'hiking', 'trail'])] },
+      { id: 'where', name: 'Where', options: [o('cove', 'La Jolla Cove', ['cove', 'la jolla', 'beach', 'seals']), o('balboa', 'Balboa Park', ['balboa', 'museum']), o('oldtown', 'Old Town', ['old town', 'oldtown', 'taco']), o('torrey', 'Torrey Pines hike', ['torrey', 'hike', 'hiking', 'trail'])] },
       { id: 'when', name: 'When', options: [o('sat_am', 'Saturday morning', ['saturday morning', 'sat morning', 'sat am']), o('sat_pm', 'Saturday afternoon', ['saturday afternoon', 'sat afternoon', 'sat pm', 'saturday evening']), o('sun_am', 'Sunday morning', ['sunday morning', 'sun morning', 'sun am']), o('sun_pm', 'Sunday afternoon', ['sunday afternoon', 'sun afternoon', 'sun pm', 'sunday evening'])] },
-      { id: 'travel', name: 'Getting there', options: [o('transit', 'Bus or trolley', ['trolley', 'bus', 'transit', 'mts']), o('carpool', 'Carpool', ['carpool', 'drive', 'driving', 'my car']), o('rideshare', 'Rideshare', ['uber', 'lyft', 'rideshare'])] },
-      { id: 'budget', name: 'Budget per person', options: [o('low', 'Under $15', ['under 15', 'under $15', 'cheap', '$10']), o('mid', '$15 to $30', ['$20', '$25', '20 dollars', '15 to 30']), o('high', 'Over $30', ['$40', '$50', 'over 30', 'over $30'])] }
+      TRAVEL,
+      { id: 'budget', name: 'Budget per person', options: [o('low', 'Under $15', ['under 15', 'under $15', 'cheap', '$10', '10 dollars', '15 dollars', '15 bucks', 'at most 15', 'at most $15', 'max 15', 'max $15', '$15 max']), o('mid', '$15 to $30', ['$20', '$25', '20 dollars', '25 dollars', '15 to 30', '$15 to $30', '15-30']), o('high', 'Over $30', ['$40', '$50', 'over 30', 'over $30'])] }
     ],
     limits: [
       { id: 'works_sat', text: 'You work every Saturday until 5 pm.', re: /(work|working|shift|job|busy).{0,25}saturday|saturday.{0,25}(work|shift|job|busy|cannot|can't|cant|bad|no good)/i,

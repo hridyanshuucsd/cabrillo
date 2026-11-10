@@ -13,7 +13,14 @@ const BUDGET_LOW_MID_HIGH = (low, mid, high, per) => ({
     o('low', low[0], low[1], { per: per[0] }), o('mid', mid[0], mid[1], { per: per[1] }), o('high', high[0], high[1], { per: per[2] })
   ]
 });
-const TRAVEL = { id: 'travel', name: 'Getting there', options: [o('transit', 'Bus or trolley', ['trolley', 'bus', 'transit', 'mts']), o('carpool', 'Carpool', ['carpool', 'drive', 'driving', 'my car']), o('rideshare', 'Rideshare', ['uber', 'lyft', 'rideshare'])] };
+// Getting there is a personal part: the plan keeps what most people picked, and anyone who picked another way goes
+// their own way (for example "Kai takes the trolley, the rest come in my car"). Limits are checked against each
+// person's own way.
+export const TRAVEL = { id: 'travel', name: 'Getting there', personal: true, options: [
+  o('transit', 'Bus or trolley', ['trolley', 'bus', 'transit', 'mts', 'public transport']),
+  o('carpool', 'Carpool', ['carpool', 'drive', 'driving', 'my car', 'have a car', 'got a car', 'pick you up', 'pick you all up', 'pick you guys up', 'pick u up', 'pick everyone up', 'pick up everyone', 'pick people up', 'pick yall up', "pick y'all up", 'give you a ride', 'give you all a ride', 'give everyone a ride', 'give you a lift']),
+  o('rideshare', 'Rideshare', ['uber', 'lyft', 'rideshare', 'ride share'])
+] };
 
 export const SCENARIOS = {
   dinner: {
@@ -23,7 +30,7 @@ export const SCENARIOS = {
       { id: 'where', name: 'Where', options: [o('convoy', 'Korean barbecue on Convoy Street', ['convoy', 'korean', 'kbbq', 'barbecue', 'bbq'], { fare: 20, place: 'a Korean barbecue spot on Convoy Street' }), o('littleitaly', 'Pizza in Little Italy', ['little italy', 'pizza', 'italian'], { fare: 26, place: 'a pizza place in Little Italy' }), o('hillcrest', 'Ramen in Hillcrest', ['hillcrest', 'ramen'], { fare: 24, place: 'a ramen shop in Hillcrest' }), o('pricecenter', 'Price Center food court', ['price center', 'food court', 'on campus'], { fare: 8, place: 'the Price Center food court' })] },
       { id: 'when', name: 'When', options: [o('fri6', 'Friday at 6 pm', ['friday at 6', 'friday 6', '6 pm', '6pm']), o('fri8', 'Friday at 8 pm', ['friday at 8', 'friday 8', '8 pm', '8pm']), o('sat7', 'Saturday at 7 pm', ['saturday', 'sat'])] },
       TRAVEL,
-      BUDGET_LOW_MID_HIGH(['Under $15', ['under 15', 'under $15', 'cheap']], ['$15 to $30', ['$20', '$25', '15 to 30']], ['Over $30', ['$40', 'over 30', 'over $30', 'splurge']], [12, 22, 36])
+      BUDGET_LOW_MID_HIGH(['Under $15', ['under 15', 'under $15', 'cheap', '15 dollars', '15 bucks', 'at most 15', 'at most $15', 'max 15', 'max $15']], ['$15 to $30', ['$20', '$25', '15 to 30', '$15 to $30']], ['Over $30', ['$40', 'over 30', 'over $30', 'splurge']], [12, 22, 36])
     ],
     limits: [
       L('veg', 'You are vegetarian, and Korean barbecue has almost nothing you can eat.', ['vegetarian', 'veggie', 'no meat', 'meat'], (p) => p.where === 'convoy', { where: 'hillcrest' }, 'I am vegetarian, so Korean barbecue is hard for me. Ramen has veggie options.'),
@@ -64,8 +71,8 @@ export const SCENARIOS = {
     id: 'trip', title: 'Plan a weekend trip out of town', short: 'Weekend trip',
     prompt: 'Your group wants to get out of San Diego for a weekend. Agree on the trip.',
     fields: [
-      { id: 'where', name: 'Where', options: [o('la', 'Los Angeles', ['los angeles', 'la ', 'santa monica'], { fare: 60, place: 'a restaurant in Los Angeles' }), o('jtree', 'Joshua Tree', ['joshua tree', 'desert'], { fare: 120, place: 'a diner near Joshua Tree' }), o('bigbear', 'Big Bear', ['big bear', 'mountains', 'snow'], { fare: 110, place: 'a cafe in Big Bear' }), o('temecula', 'Temecula', ['temecula'], { fare: 70, place: 'a restaurant in Temecula' })] },
-      { id: 'stay', name: 'Stay', options: [o('daytrip', 'Day trip, no overnight', ['day trip', 'no overnight', 'same day', 'come back']), o('airbnb', 'One night in an Airbnb', ['airbnb', 'rental', 'house']), o('camp', 'Camping', ['camp', 'tent'])] },
+      { id: 'where', name: 'Where', options: [o('la', 'Los Angeles', ['los angeles', 'la', 'santa monica'], { fare: 60, place: 'a restaurant in Los Angeles' }), o('jtree', 'Joshua Tree', ['joshua tree', 'desert'], { fare: 120, place: 'a diner near Joshua Tree' }), o('bigbear', 'Big Bear', ['big bear', 'mountains', 'snow'], { fare: 110, place: 'a cafe in Big Bear' }), o('temecula', 'Temecula', ['temecula'], { fare: 70, place: 'a restaurant in Temecula' })] },
+      { id: 'stay', name: 'Stay', options: [o('daytrip', 'Day trip, no overnight', ['day trip', 'no overnight', 'same day', 'come back']), o('airbnb', 'One night in an Airbnb', ['airbnb', 'rental house', 'vacation rental', 'house']), o('camp', 'Camping', ['camp', 'camping', 'tent'])] },
       { id: 'transport', name: 'Getting there', options: [o('amtrak', 'Amtrak train', ['amtrak', 'train']), o('rental', 'Rent a car', ['rent a car', 'rental car', 'rent']), o('carpool', 'Carpool in a friend\'s car', ['carpool', 'my car', 'drive'])] },
       BUDGET_LOW_MID_HIGH(['Under $60', ['under 60', 'under $60', 'cheap']], ['$60 to $120', ['$100', '60 to 120']], ['Over $120', ['over 120', 'over $120', '$200']], [50, 90, 160])
     ],
@@ -174,7 +181,7 @@ export const SCENARIOS = {
     fields: [
       { id: 'sport', name: 'Sport', options: [o('basketball', 'Basketball', ['basketball', 'hoops']), o('volleyball', 'Volleyball', ['volleyball']), o('soccer', 'Soccer', ['soccer', 'football']), o('ultimate', 'Ultimate frisbee', ['ultimate', 'frisbee'])] },
       { id: 'day', name: 'Game day', options: [o('tue', 'Tuesday', ['tuesday']), o('thu', 'Thursday', ['thursday']), o('sat', 'Saturday', ['saturday'])] },
-      { id: 'time', name: 'Time', options: [o('morning', 'Morning', ['morning', 'am']), o('evening', 'Evening', ['evening', 'night', 'pm'])] },
+      { id: 'time', name: 'Time', options: [o('morning', 'Morning', ['morning', 'before class', '8 am', '9 am', '10 am', '9am', '10am']), o('evening', 'Evening', ['evening', 'night', 'after class', '6 pm', '7 pm', '8 pm', '6pm', '7pm', '8pm'])] },
       { id: 'shirts', name: 'Jerseys', options: [o('buy', 'Buy matching shirts ($20)', ['buy shirts', 'matching', 'jerseys', 'custom']), o('color', 'Everyone wears the same color', ['same color', 'wear black', 'wear blue']), o('none', 'No jerseys', ['no jerseys', 'no shirts'])] }
     ],
     limits: [
@@ -236,7 +243,7 @@ export const SCENARIOS = {
     prompt: 'You and your cousins are planning a 50th anniversary dinner for your grandparents. Agree on the plan.',
     fields: [
       { id: 'where', name: 'Restaurant', options: [o('italian', 'Italian in Little Italy', ['italian', 'little italy'], { fare: 26, place: 'an Italian restaurant in Little Italy' }), o('dimsum', 'Dim sum on Convoy Street', ['dim sum', 'convoy', 'chinese'], { fare: 20, place: 'a dim sum restaurant on Convoy Street' }), o('mexican', 'Mexican in Old Town', ['mexican', 'old town'], { fare: 18, place: 'a Mexican restaurant in Old Town' })] },
-      { id: 'when', name: 'When', options: [o('sat_lunch', 'Saturday lunch', ['saturday lunch', 'lunch']), o('sat_dinner', 'Saturday dinner', ['saturday dinner', 'saturday night']), o('sun_lunch', 'Sunday lunch', ['sunday'])] },
+      { id: 'when', name: 'When', options: [o('sat_lunch', 'Saturday lunch', ['saturday lunch', 'sat lunch', 'lunch on saturday', 'saturday at noon']), o('sat_dinner', 'Saturday dinner', ['saturday dinner', 'saturday night', 'sat dinner', 'dinner on saturday']), o('sun_lunch', 'Sunday lunch', ['sunday'])] },
       { id: 'gift', name: 'Gift', options: [o('album', 'A photo album', ['album', 'photos']), o('flowers', 'Flowers', ['flowers']), o('trip', 'A weekend trip voucher', ['trip', 'voucher', 'getaway'])] },
       { id: 'ride', name: 'Getting them there', options: [o('cousin', 'A cousin drives them', ['drive them', 'pick them up', 'cousin drives']), o('rideshare', 'Book them a rideshare', ['uber', 'lyft', 'rideshare']), o('selfdrive', 'They drive themselves', ['drive themselves', 'they drive'])] }
     ],

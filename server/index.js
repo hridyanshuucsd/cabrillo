@@ -32,7 +32,8 @@ const lobby = new Lobby(io);
 
 authRoutes(app);
 // ai: which provider answers; model: the model that last answered (null until the first call works). No keys are shown.
-app.get('/api/health', (req, res) => res.json({ ok: true, ...aiInfo() }));
+// build: the commit that is running (set by Render), to check that a deploy went live.
+app.get('/api/health', (req, res) => res.json({ ok: true, build: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || null, ...aiInfo() }));
 // Public settings for the browser. A Mapbox public token is meant to be visible; restrict it to this site's URL in Mapbox.
 app.get('/api/config', (req, res) => res.json({ mapboxToken: process.env.MAPBOX_TOKEN || null }));
 app.get('/api/tasks', (req, res) => res.json(Object.values(TASKS).map((t) => ({ id: t.id, title: t.title, short: t.short, prompt: t.prompt }))));

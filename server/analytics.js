@@ -35,7 +35,7 @@ export const DEFINITIONS = [
   ['Plan locked', 'Every person at the table accepted the same complete plan.'],
   ['Time to plan', 'Seconds from the moment the chat opened to the moment the plan locked. The median is over tables that locked a plan.'],
   ['Limit came up', 'The person shared their private limit in one of the three ways (said it themselves from the draft, or asked the AI to pass it on with or without their name), or wrote words that match their limit in an ordinary message ("came up in their words only").'],
-  ['Limit respected', 'For locked plans only: the final plan does not break the person\'s limit. For a limit a person wrote themselves, this is their own answer when they accepted.'],
+  ['Limit respected', 'For locked plans only: the final plan does not break the person\'s limit. For a limit a person wrote themselves, this is their own answer when they accepted. For Getting there each person may go their own way, so the limit is checked against the way that person picked.'],
   ['Messages', 'Chat messages a person sent to the group. Questions to the AI are counted separately (in the group, or private).'],
   ['Taps', 'Picks made by tapping a part of the plan, including "Me too" under someone\'s message.'],
   ['Top talker share', 'The share of a table\'s human messages sent by its most active person. With n people, an even split is 1/n.'],
@@ -222,7 +222,7 @@ export async function transcript(room, sessionId) {
   const task = TASKS[taskId];
   const opt = (f, o) => task?.fields.find((x) => x.id === f)?.options.find((x) => x.id === o)?.name || o;
   const anyOpt = (o) => task?.fields.flatMap((f) => f.options).find((x) => x.id === o)?.name || o;
-  const planText = (plan) => (task && plan ? task.fields.map((f) => opt(f.id, plan[f.id]) || 'open').join(', ') : '');
+  const planText = (plan, ways) => (task && plan ? task.fields.map((f) => (opt(f.id, plan[f.id]) || 'open') + (ways?.[f.id] ? ` (${Object.entries(ways[f.id]).map(([c, o]) => `${c}: ${opt(f.id, o)}`).join(', ')})` : '')).join(', ') : '');
   const rows = [];
   for (const l of logs) {
     const p = l.payload || {};
@@ -232,9 +232,9 @@ export async function transcript(room, sessionId) {
     else if (l.type === 'limit_shared') { row.kind = 'shared limit'; row.text = p.via === 'ai' ? `${p.anonymous ? 'through the AI, without a name' : 'through the AI, with their name'}${p.text ? `: ${p.text}` : ''}` : 'said it themselves (their message follows)'; }
     else if (l.type === 'pick') { row.kind = 'tap'; row.text = p.follow ? `goes along with ${Object.entries(p.picks || {}).map(([f, o]) => opt(f, o)).join(', ')}` : p.option ? `picked ${opt(p.field, p.option)}` : `removed their pick for ${p.field}`; }
     else if (l.type === 'me_too') { row.kind = 'tap'; row.text = `"Me too" on ${p.with}'s message: ${Object.entries(p.picks || {}).map(([f, o]) => opt(f, o)).join(', ')}`; }
-    else if (l.type === 'plan_complete') { row.who = 'system'; row.kind = 'plan complete'; row.text = planText(p.plan); }
+    else if (l.type === 'plan_complete') { row.who = 'system'; row.kind = 'plan complete'; row.text = planText(p.plan, p.ways); }
     else if (l.type === 'vote') { row.kind = p.value ? 'accepted' : 'withdrew acceptance'; row.text = p.limit_ok === false ? 'the plan breaks their limit' : ''; }
-    else if (l.type === 'deal_locked') { row.who = 'system'; row.kind = 'plan locked'; row.text = planText(p.plan); }
+    else if (l.type === 'deal_locked') { row.who = 'system'; row.kind = 'plan locked'; row.text = planText(p.plan, p.ways); }
     else if (l.type === 'map_shown' || l.type === 'route_shown') { row.kind = 'AI card'; row.text = l.type === 'map_shown' ? `map of the options${p.auto ? ' (added by the AI)' : ` (asked for by ${p.requested_by})`}` : `route to ${anyOpt(p.place)} (${p.mode === 'transit' ? 'bus or trolley' : 'by car'})`; }
     else if (l.type === 'booking_proposed') { row.kind = 'AI card'; row.text = `${p.kind} card${p.auto ? ' (added by the AI)' : ` (asked for by ${p.requested_by})`}: asks each person privately`; }
     else if (l.type === 'booking_answer') { row.kind = 'private answer'; row.private = true; row.text = p.none ? 'none of the options work' : `works: ${(p.ok || []).join(', ')}`; }
