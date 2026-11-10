@@ -20,6 +20,13 @@ globalThis.fetch = async (url, opts) => {
       { name: 'La Jolla Cove', pros: ['Sea lions and tide pools', 'Free'], cons: ['Parking is hard on weekends'] },
       { name: 'Balboa Park', pros: ['Lots of shade and museums', 'Easy by bus'], cons: ['Museums cost extra'] }] });
   } else if (sys.includes('keep one line above the chat')) content = 'The group is leaning toward La Jolla Cove and Sunday afternoon; getting there and budget are open.';
+  else if (sys.includes('Someone tagged you with @AI')) {
+    const q = /Question from \w+: (.*)$/s.exec(user)?.[1] || '';
+    if (/bring/i.test(q)) content = JSON.stringify({ text: 'Here is a short packing list for the cove.', blocks: [{ type: 'list', title: 'What to bring', items: ['Water', 'Sunscreen', 'A towel', 'Shoes that can get wet'] }] });
+    else if (/split|cost|each/i.test(q)) content = JSON.stringify({ text: 'Split three ways, it comes to 20 dollars each.', blocks: [{ type: 'table', title: 'Split', columns: ['Person', 'Pays'], rows: [['P01', '$20'], ['A01', '$20'], ['A02', '$20']] }] });
+    else if (/how do|get there|steps/i.test(q)) content = JSON.stringify({ text: 'Take the bus from campus.', blocks: [{ type: 'steps', title: 'By bus', items: ['Walk to the campus stop', 'Ride the bus to La Jolla', 'Walk five minutes to the cove'] }, { type: 'pick', field: 'travel' }] });
+    else content = JSON.stringify({ text: 'A sea lion can hold its breath for about 10 minutes.' });
+  }
   else content = 'Bring water, sunscreen and a towel; P01 might want shoes for the tide pools.';
   return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
 };

@@ -62,7 +62,7 @@ export default function Game() {
   if (!g) return <div className="wrap center-screen"><div className="spinner" aria-hidden="true" /><p className="muted">Joining your table...</p></div>;
   const send = (ev, extra) => getSocket().emit(ev, { sessionId: id, ...extra });
 
-  if (g.stage === 'chat') return <ChatScreen g={g} send={send} keyboard={keyboard} typers={Object.values(typing).map((t) => t.name)} />;
+  if (g.stage === 'chat') return <ChatScreen g={g} send={send} keyboard={keyboard} typers={[...(g.aiThinking ? ['The AI'] : []), ...Object.values(typing).map((t) => t.name)]} />;
   if (g.stage === 'done') return <Results g={g} />;
   return <Briefing g={g} send={send} left={left} />;
 }
@@ -484,6 +484,7 @@ function Messages({ g, send, typers, sayMyself, share, onAccept }) {
                   {m.text}
                   {m.poll && <Options g={g} send={send} id={m.poll} compact />}
                   {m.card === 'compare' && m.compare && <Compare c={m.compare} g={g} send={send} />}
+                  {m.blocks?.map((b, k) => <Block key={k} b={b} g={g} send={send} />)}
                   {m.actions === 'limit' && unshared && <ShareOptions sayMyself={sayMyself} share={share} />}
                 </div>
               </div>
@@ -501,7 +502,7 @@ function Messages({ g, send, typers, sayMyself, share, onAccept }) {
             </div>
           );
         })}
-        {typers.length > 0 && <div className="typing" aria-live="off"><span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>{typers.join(', ')} {typers.length === 1 ? 'is' : 'are'} typing</div>}
+        {typers.length > 0 && <div className="typing" aria-live="off"><span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>{typers.length === 1 && typers[0] === 'The AI' ? 'The AI is working on an answer' : `${typers.join(', ')} ${typers.length === 1 ? 'is' : 'are'} typing`}</div>}
       </div>
       {newBelow && <button className="new-below" onClick={() => { box.current.scrollTop = box.current.scrollHeight; setNewBelow(false); }}>New messages</button>}
     </div>
@@ -510,22 +511,42 @@ function Messages({ g, send, typers, sayMyself, share, onAccept }) {
 
 // "@AI pros and cons": each option with its pros and cons, and a button to pick it.
 function Compare({ c, g, send }) {
-  const field = g.task.fields.find((f) => f.id === c.field);
-  const mine = g.me.prefs[c.field];
+  const find = (name) => {
+    for (const f of g.task.fields) { if (c.field && f.id !== c.field) continue; const o = f.options.find((x) => x.name.toLowerCase() === name.toLowerCase()); if (o) return { f, o }; }
+    return null;
+  };
   return (
     <div className="compare" role="group" aria-label={c.title}>
       {c.items.map((x) => {
-        const opt = field?.options.find((o) => o.name.toLowerCase() === x.name.toLowerCase());
+        const hit = find(x.name), opt = hit?.o, fid = hit?.f.id, mine = fid ? g.me.prefs[fid] : null;
         return (
           <div key={x.name} className="cmp-item">
             <div className="row between"><strong>{x.name}</strong>
-              {opt && !g.deal && <button className={`btn small ${mine === opt.id ? '' : 'ghost'}`} aria-pressed={mine === opt.id} onClick={() => send('game:pick', { field: c.field, option: mine === opt.id ? '' : opt.id })}>{mine === opt.id ? 'Picked' : 'Pick'}</button>}
+              {opt && !g.deal && <button className={`btn small ${mine === opt.id ? '' : 'ghost'}`} aria-pressed={mine === opt.id} onClick={() => send('game:pick', { field: fid, option: mine === opt.id ? '' : opt.id })}>{mine === opt.id ? 'Picked' : 'Pick'}</button>}
             </div>
             {x.pros.map((t, i) => <div key={`p${i}`} className="cmp pro"><span aria-hidden="true">+</span><span className="sr-only">Pro: </span>{t}</div>)}
             {x.cons.map((t, i) => <div key={`c${i}`} className="cmp con"><span aria-hidden="true">−</span><span className="sr-only">Con: </span>{t}</div>)}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// One part of an @AI answer: a list, steps, a table, or pros and cons.
+function Block({ b, g, send }) {
+  if (b.type === 'compare') return <Compare c={{ title: b.title || 'Pros and cons', items: b.items }} g={g} send={send} />;
+  return (
+    <div className={`blk blk-${b.type}`} role="group" aria-label={b.title || b.type}>
+      {b.title && <div className="blk-title">{b.title}</div>}
+      {b.type === 'list' && <ul>{b.items.map((x, i) => <li key={i}>{x}</li>)}</ul>}
+      {b.type === 'steps' && <ol>{b.items.map((x, i) => <li key={i}>{x}</li>)}</ol>}
+      {b.type === 'table' && (
+        <div className="blk-scroll"><table>
+          <thead><tr>{b.columns.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
+          <tbody>{b.rows.map((r, i) => <tr key={i}>{b.columns.map((_, j) => <td key={j}>{r[j] || ''}</td>)}</tr>)}</tbody>
+        </table></div>
+      )}
     </div>
   );
 }

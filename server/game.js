@@ -409,8 +409,19 @@ export class Table {
     if (MAP_RE.test(text) && !this.aiPaused && placesOf(this.task).length) { this.showMap(p, true); this.broadcast(); return; }
     if (this.aiPaused) { this.pendingQuestions.push({ pcode: p.pcode, name: p.name, text }); this.broadcast(); return; }
     if (wantsCompare(text) && await this.compare(p, text)) return;
-    const a = await answerQuestion(text, { task: this.task, summary: this.summaryText(), recent: this.recentChat(12) });
-    this.aiSay(this.withNames(a.text), 'ai_answer', { source: a.source, question: text, to_player: p.pcode });
+    this.aiThinking = true; this.broadcast();
+    let a;
+    try { a = await answerQuestion(this.anonymize(text), { task: this.task, asker: p.pcode, summary: this.anonymize(this.summaryText()), recent: this.recentChat(16, true) }); }
+    finally { this.aiThinking = false; }
+    if (this.stage !== 'chat') return;
+    const fix = (t) => this.withNames(t);
+    const blocks = (a.blocks || []).map((b) => b.type === 'compare' ? { ...b, items: b.items.map((x) => ({ ...x, pros: x.pros.map(fix), cons: x.cons.map(fix) })) }
+      : b.type === 'table' ? { ...b, rows: b.rows.map((r) => r.map(fix)) } : b.items ? { ...b, items: b.items.map(fix) } : b);
+    const pick = blocks.find((b) => b.type === 'pick');
+    const extra = { answer: true, blocks: blocks.filter((b) => !['pick', 'map'].includes(b.type)) };
+    if (pick) extra.poll = pick.field;
+    this.aiSay(fix(a.text), 'ai_answer', { source: a.source, question: text, to_player: p.pcode, blocks: blocks.map((b) => b.type) }, true, null, extra);
+    if (blocks.some((b) => b.type === 'map') && placesOf(this.task).length) { this.showMap(p, true); this.broadcast(); }
   }
   // "@AI pros and cons of ...": a card with each option's pros and cons. The options are the ones named in the question
   // (or every option of the part of the plan it is about). The model writes the points; without a key, the app's own facts.
@@ -436,7 +447,7 @@ export class Table {
     else out = { text: `Here is what I know about each option for ${f.name.toLowerCase()}. The group decides.`, items: facts.map((x) => ({ name: x.name, pros: x.pros.length ? x.pros : ['Nothing in its favor said yet'], cons: x.cons.length ? x.cons : ['No downsides raised yet'] })) };
     if (this.stage !== 'chat') return true;
     const lead = out.text ? this.withNames(out.text) : `Pros and cons for ${f.name.toLowerCase()}.`;
-    this.aiSay(lead, 'ai_compare', { source, question: text, to_player: p.pcode, field, options: ids }, true, null, { card: 'compare', compare: { field, title: `${f.name}: pros and cons`, items: out.items } });
+    this.aiSay(lead, 'ai_compare', { source, question: text, to_player: p.pcode, field, options: ids }, true, null, { answer: true, card: 'compare', compare: { field, title: `${f.name}: pros and cons`, items: out.items } });
     return true;
   }
   // What the app itself knows about one option: who wants it, shared limits it breaks, drive time, game information.
@@ -451,8 +462,10 @@ export class Table {
     if (placeField(this.task) === field) { const pl = placeOf(this.task, id); if (pl) { const e = estimate(PICKUP, pl); (e.minutes <= 20 ? pros : cons).push(`About ${e.minutes} min drive from campus`); } }
     return { name: o.name, pros: pros.slice(0, 3), cons: cons.slice(0, 3) };
   }
-  recentChat(n) {
-    return this.chat.filter((m) => !m.to && ['chat', 'question', 'limit', 'pick'].includes(m.kind)).slice(-n).map((m) => `${m.from}: ${this.anonymize(m.text)}`).join('\n');
+  // withAI: also the AI's answers to questions, so follow-ups ("what about the second one?") make sense.
+  recentChat(n, withAI) {
+    return this.chat.filter((m) => !m.to && (['chat', 'question', 'limit', 'pick'].includes(m.kind) || (withAI && m.kind === 'ai' && m.answer)))
+      .slice(-n).map((m) => `${m.from}: ${this.anonymize(m.text)}${m.kind === 'question' ? ' (asked the AI)' : ''}${m.blocks?.length ? ` [also showed: ${m.blocks.map((b) => b.title || b.type).join(', ')}]` : ''}`).join('\n');
   }
 
   pauseAI(key, paused) {
@@ -1012,6 +1025,7 @@ export class Table {
       panel: this.panelView(),
       // the model's line is used while it is fresh; otherwise the rule-based line
       hearing: this.mode === 'listen' && chatting ? (this.hearing && this.hearing.at > (this.lastChangeAt || 0) - 15000 ? this.hearing.text : this.hearingRule()) : null,
+      aiThinking: !!this.aiThinking,
       quiet: this.mode === 'listen' && chatting ? this.humans().filter((h) => h.msgs === 0 && h.picks === 0).map((h) => h.name) : [],
       plan: final, complete: planComplete(this.task, final), deal: this.deal, outcome: this.outcome,
       chat: this.chat.filter((m) => !m.to || m.to === key).slice(-80).map(({ to, ...m }) => m),

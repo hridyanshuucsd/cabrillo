@@ -75,8 +75,18 @@ async function run(label, port, env, extraArgs = []) {
     check(`${label}: "@ai pros and cons" gives a pros and cons card`, await wait(cmp, 25000));
     check(`${label}: the card covers both options, each with pros and cons`, (await cmp.locator('.cmp-item').count()) === 2 && (await cmp.locator('.cmp.pro').count()) >= 2 && (await cmp.locator('.cmp.con').count()) >= 2);
     await cmp.scrollIntoViewIfNeeded(); await a.screenshot({ path: `${DIR}/${label}_025_compare.png` });
-    await say('@AI what should we bring to the beach?');
-    check(`${label}: "@AI" with another question gets an answer`, await wait(a.locator('.bubble.ai').filter({ hasText: /bring|sunscreen|water|towel|information|know/i }).last(), 20000));
+    const answers = async () => a.locator('.bubble.ai').count();
+    const ask = async (q) => { const n = await answers(); await say(q); for (let i = 0; i < 50 && (await answers()) <= n; i++) await a.waitForTimeout(400); return (await answers()) > n; };
+    check(`${label}: "@AI what should we bring" gets an answer`, await ask('@AI what should we bring to the beach?'));
+    check(`${label}: "@ai how long can a sea lion hold its breath" (off topic) gets an answer`, await ask('@ai how long can a sea lion hold its breath'));
+    check(`${label}: "@AI how do we get there by bus" gets an answer`, await ask('@AI how do we get there by bus, step by step?'));
+    check(`${label}: "@AI split $60 three ways" gets an answer`, await ask('@AI if it costs $60 total how do we split it each?'));
+    if (label === 'model') {
+      check('model: the packing answer shows a list', (await a.locator('.blk-list li').count()) >= 3);
+      check('model: the bus answer shows steps and the options to tap', (await a.locator('.blk-steps li').count()) >= 3 && (await a.locator('.bubble.ai .opts').count()) >= 1);
+      check('model: the split answer shows a table with names, not codes', (await a.locator('.blk-table td').allInnerTexts()).includes('Maya'));
+      await a.locator('.blk-table').last().scrollIntoViewIfNeeded(); await a.screenshot({ path: `${DIR}/model_026_answers.png` });
+    }
 
     // share my limit through the AI: options it rules out are marked in the options card
     await a.getByRole('button', { name: 'Your private limit' }).click();

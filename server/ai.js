@@ -12,7 +12,7 @@ Game information:
 ${info}
 Plan so far (from the chat):
 ${ctx.summary}
-Recent chat (people appear as codes such as P01; AI players as A01; newest last):
+Recent chat, including earlier questions to the AI and its answers (people appear as codes such as P01; AI players as A01; the AI as AI; newest last):
 ${ctx.recent}`;
 }
 
@@ -73,7 +73,27 @@ async function chat(system, user, maxTokens, timeoutMs = 12000) {
   } finally { clearTimeout(timer); }
 }
 
-const callLLM = (question, ctx) => chat(`${SYSTEM}\n\n${context(ctx)}`, question, 200);
+// @AI questions: the AI answers anything a person asks, in the shape that fits best. Plain sentences by default; a list,
+// steps, a table, pros and cons, plan options to tap, or a map when those make the answer easier to use.
+const ASK = `You are the AI in Cabrillo, a clearly labeled AI assistant inside a small student group chat where the group is making one plan.
+Someone tagged you with @AI. Answer whatever they ask: about the plan, the options, the places, logistics, splitting costs, what to bring, ideas, or anything else, including questions that have nothing to do with the plan. Be helpful and specific, like a friendly, organized classmate.
+Rules:
+- You never vote, never decide for the group, and never pick a winner between the group's options; lay out trade-offs instead. For anything outside the plan (facts, ideas, advice, math), answer directly.
+- You cannot see anyone's private limit unless it was shared in the chat. Never guess one.
+- Prices, times, schedules and limits in this game are invented: for those, use only the information given. You may use common knowledge about real places and the world.
+- You cannot browse. For live information (today's weather, hours right now, current prices), say you cannot check it live and give general guidance.
+- People appear as codes such as P01 or A02. Refer to people only by code.
+- Plain language. No emojis, no em dashes, no contractions. Keep "text" to at most 3 sentences; put detail in blocks.
+- Use earlier questions and answers in the chat for follow-ups ("what about the second one").
+Answer with JSON only:
+{"text": "...", "blocks": [ ... ]}
+"blocks" is optional, at most 2, and only when it helps. Block types:
+{"type": "list", "title": "...", "items": ["...", ...]}            (up to 8 short items)
+{"type": "steps", "title": "...", "items": ["...", ...]}           (up to 8 short steps, in order)
+{"type": "table", "title": "...", "columns": ["...", ...], "rows": [["...", ...], ...]}   (up to 4 columns, 8 rows)
+{"type": "compare", "title": "...", "items": [{"name": "...", "pros": ["..."], "cons": ["..."]}]}   (2 to 4 items)
+{"type": "pick", "field": "<part id>"}    (shows the options of one part of the plan as buttons to tap)
+{"type": "map"}                           (shows the place options on a map)`;
 
 const HEARING = `You are the AI in Cabrillo. You listen to a small group chat while the group makes one plan, and you keep one line above the chat that says what you are hearing.
 Write ONE sentence of at most 24 words: what the group seems to want so far and what is still open or in conflict.
@@ -101,12 +121,39 @@ function scripted(question, ctx) {
   return 'I can recap the plan so far, list what is still open, and share game information about travel, cost, and timing.';
 }
 
+const str = (x, n) => String(x ?? '').replace(/\u2014|\u2013/g, ', ').replace(/\s+/g, ' ').trim().slice(0, n);
+const strs = (a, k, n) => (Array.isArray(a) ? a : []).map((x) => str(x, n)).filter(Boolean).slice(0, k);
+// Keeps only well-formed blocks, with sizes capped, so the app never draws something broken.
+export function cleanBlocks(blocks, task) {
+  const out = [];
+  for (const b of Array.isArray(blocks) ? blocks.slice(0, 2) : []) {
+    if (!b || typeof b !== 'object') continue;
+    const title = str(b.title, 80);
+    if ((b.type === 'list' || b.type === 'steps') && strs(b.items, 8, 160).length) out.push({ type: b.type, title, items: strs(b.items, 8, 160) });
+    else if (b.type === 'table') {
+      const columns = strs(b.columns, 4, 40);
+      const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 8).map((r) => strs(r, columns.length || 4, 60)).filter((r) => r.length);
+      if (columns.length && rows.length) out.push({ type: 'table', title, columns, rows });
+    } else if (b.type === 'compare') {
+      const items = (Array.isArray(b.items) ? b.items : []).slice(0, 4).map((x) => ({ name: str(x?.name, 60), pros: strs(x?.pros, 3, 90), cons: strs(x?.cons, 3, 90) })).filter((x) => x.name);
+      if (items.length) out.push({ type: 'compare', title, items });
+    } else if (b.type === 'pick' && task.fields.some((f) => f.id === b.field)) out.push({ type: 'pick', field: b.field });
+    else if (b.type === 'map') out.push({ type: 'map' });
+  }
+  return out;
+}
 export async function answerQuestion(question, ctx) {
   try {
-    const r = await callLLM(question, ctx);
-    if (r?.text) return r;
+    const parts = ctx.task.fields.map((f) => `- part id ${f.id} (${f.name}): ${f.options.map((o) => o.name).join(', ')}`).join('\n');
+    const r = await chat(ASK, `${context(ctx)}\nPart ids for "pick" blocks:\n${parts}\n\nQuestion from ${ctx.asker}: ${question}`, 700, 25000);
+    if (r?.text) {
+      let j = null;
+      try { const m = r.text.match(/\{[\s\S]*\}/); j = JSON.parse(m ? m[0] : r.text); } catch {}
+      if (j && (j.text || j.blocks)) return { text: str(j.text, 600) || 'Here you go.', blocks: cleanBlocks(j.blocks, ctx.task), source: r.source };
+      return { text: str(r.text, 600), blocks: [], source: r.source }; // the model answered in plain text
+    }
   } catch (e) { console.error('AI call failed, using scripted answer:', e.message); }
-  return { text: scripted(question, ctx), source: 'scripted' };
+  return { text: scripted(question, ctx), blocks: [], source: 'scripted' };
 }
 
 export const aiMode = () => (process.env.ANTHROPIC_API_KEY ? 'anthropic' : process.env.OPENAI_API_KEY ? 'openai' : 'scripted');
