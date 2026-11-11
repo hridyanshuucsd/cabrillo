@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, emit, getSocket, msToClock, mmss, useCountdown, useSocketEvent } from '../lib.js';
 import TopBar from '../components/Brand.jsx';
-import { MapCard, RideCard, TableCard, PlanCard, BillCard } from '../components/Cards.jsx';
+import { PlanCard } from '../components/Cards.jsx';
+import PlanBoard, { Options, PartWidget, CalendarLinks } from '../components/Board.jsx';
+import { emit as emitAck } from '../lib.js';
 
 // The flow is three steps: Briefing (your table fills while you read the task and your private limit),
 // Chat (no timer; the plan locks when everyone accepts it), and Results.
@@ -62,6 +64,13 @@ function useOnline() {
     return () => { clearTimeout(t); s.off('connect', up); s.off('disconnect', down); };
   }, []);
   return online;
+}
+// A wide screen shows the plan board beside the chat; a phone opens it as a sheet.
+function useWide() {
+  const q = '(min-width: 1000px)';
+  const [wide, setWide] = useState(() => typeof window !== 'undefined' && window.matchMedia(q).matches);
+  useEffect(() => { const m = window.matchMedia(q); const f = () => setWide(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
+  return wide;
 }
 const Offline = () => <div className="offline" role="status">Connection lost. Reconnecting...</div>;
 
@@ -241,34 +250,45 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
   const [sheet, setSheet] = useState(null); // { type: 'field', id } | { type: 'board' } | { type: 'limit' } | { type: 'info' } | { type: 'accept' }
   const [draft, setDraft] = useState(null); // text placed in the message box by "Say it myself"
   const [ask, setAsk] = useState('off');    // 'off' | 'group' (everyone sees the question) | 'private' (only you do)
+  const wide = useWide();
   const close = () => setSheet(null);
   const sayMyself = () => { setAsk('off'); setDraft({ text: g.me.limit.say, n: Date.now() }); close(); };
   const share = (mode) => { send('game:share', { mode }); close(); };
   const humans = g.players.filter((p) => !p.isAI);
+  const onAccept = () => {
+    if (g.me.accepted) return send('game:accept', { value: false });
+    if (g.me.limit.custom || g.me.limit.ok === false) return setSheet({ type: 'accept' });
+    send('game:accept', { value: true });
+  };
+  // Open the board (a sheet on a phone; already beside the chat on a wide screen) and bring one card or part into view.
+  const openBoard = (target) => {
+    if (!wide) setSheet({ type: 'board' });
+    if (target) setTimeout(() => document.getElementById(target)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), wide ? 0 : 300);
+  };
   return (
-    <div className="app">
-      <header className={`appbar ${keyboard ? 'compact' : ''}`}>
-        <div className="appbar-main">
-          <div className="appbar-text">
-            <div className="appbar-title">{g.task.short}</div>
-            <div className="appbar-sub">{g.kind === 'class' ? `Table ${g.number} · ` : ''}{g.players.length} at the table</div>
+    <div className={`app ${wide ? 'with-board' : ''}`}>
+      <div className="chat-col">
+        <header className={`appbar ${keyboard ? 'compact' : ''}`}>
+          <div className="appbar-main">
+            <div className="appbar-text">
+              <div className="appbar-title">{g.task.short}</div>
+              <div className="appbar-sub">{g.kind === 'class' ? `Table ${g.number} · ` : ''}{g.players.length} at the table</div>
+            </div>
+            {!wide && <button className="btn small" onClick={() => openBoard()}>Plan board</button>}
+            <button className="btn ghost small" onClick={() => setSheet({ type: 'info' })}>Task</button>
           </div>
-          <button className="btn ghost small" onClick={() => setSheet({ type: 'info' })}>Task</button>
-        </div>
-      </header>
-      {!online && <Offline />}
-      {!keyboard && <Board g={g} open={setSheet} />}
-      <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} followUp={() => setAsk('private')} openField={(id) => setSheet({ type: 'field', id })} onAccept={() => {
-        if (g.me.accepted) return send('game:accept', { value: false });
-        if (g.me.limit.custom || g.me.limit.ok === false) return setSheet({ type: 'accept' });
-        send('game:accept', { value: true });
-      }} />
-      {!keyboard && <Waiting g={g} />}
-      {!keyboard && <BottomBar g={g} send={send} open={setSheet} humans={humans} />}
-      <Composer g={g} send={send} draft={draft} ask={ask} setAsk={setAsk} />
+        </header>
+        {!online && <Offline />}
+        {!keyboard && <Board g={g} open={setSheet} openBoard={openBoard} wide={wide} />}
+        <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} followUp={() => setAsk('private')} openField={(id) => setSheet({ type: 'field', id })} openBoard={openBoard} onAccept={onAccept} />
+        {!keyboard && <Waiting g={g} openBoard={openBoard} />}
+        {!keyboard && <BottomBar g={g} send={send} open={setSheet} humans={humans} />}
+        <Composer g={g} send={send} draft={draft} ask={ask} setAsk={setAsk} />
+      </div>
+      {wide && <aside className="board-col" aria-label="Plan board"><PlanBoard g={g} send={send} onAccept={onAccept} /></aside>}
 
-      {sheet?.type === 'field' && <FieldSheet g={g} send={send} id={sheet.id} onClose={close} />}
-      {sheet?.type === 'board' && <BoardSheet g={g} send={send} onClose={close} open={setSheet} />}
+      {sheet?.type === 'field' && <FieldSheet g={g} send={send} id={sheet.id} onClose={close} openBoard={openBoard} />}
+      {sheet?.type === 'board' && <BoardSheet g={g} send={send} onClose={close} onAccept={onAccept} />}
       {sheet?.type === 'limit' && <LimitSheet g={g} onClose={close} sayMyself={sayMyself} share={share} />}
       {sheet?.type === 'info' && <InfoSheet g={g} send={send} onClose={close} humans={humans} />}
       {sheet?.type === 'accept' && <AcceptSheet g={g} send={send} onClose={close} open={setSheet} />}
@@ -277,13 +297,13 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
 }
 
 // The plan, live above the chat. At listening tables the AI fills it in from the chat; taps count everywhere.
-function Board({ g, open }) {
+function Board({ g, open, openBoard, wide }) {
   const listen = g.mode === 'listen';
   const paused = listen && !!g.pausedBy;
   return (
     <section className="board" aria-label="The plan so far">
       <div className="planbar">
-        <button className={`ai-status ${paused ? 'paused' : ''} ${listen ? '' : 'plain'}`} onClick={() => open({ type: 'board' })} aria-label="The plan so far, details">
+        <button className={`ai-status ${paused ? 'paused' : ''} ${listen ? '' : 'plain'}`} onClick={() => openBoard()} aria-label="The plan so far, details">
           {listen && <span className="dot-live" aria-hidden="true" />}{paused ? 'AI paused' : listen ? 'AI is listening' : 'The plan'}
         </button>
         <div className="planbar-scroll">
@@ -296,76 +316,37 @@ function Board({ g, open }) {
           ))}
         </div>
       </div>
-      {g.hearing && <button className="hearing" onClick={() => open({ type: 'board' })}><span className="hearing-k">AI hears</span><span className="hearing-v">{g.hearing}</span></button>}
+      {g.hearing && !wide && <button className="hearing" onClick={() => openBoard()}><span className="hearing-k">AI hears</span><span className="hearing-v">{g.hearing}</span></button>}
     </section>
   );
 }
 
-// Options for one part of the plan: who wants what, and a tap to pick.
-function Options({ g, send, id, compact }) {
-  const field = g.task.fields.find((f) => f.id === id);
+function FieldSheet({ g, send, id, onClose, openBoard }) {
   const row = g.panel.find((f) => f.id === id);
-  if (!field) return null;
-  const who = (oid) => row?.options.find((o) => o.option === oid)?.who || [];
-  const mine = g.me.prefs[id];
-  return (
-    <div className={`opts ${compact ? 'compact' : ''}`} role="group" aria-label={field.name}>
-      {field.options.map((o) => {
-        const names = who(o.id);
-        const no = row?.blocked?.[o.id] || [];
-        return (
-          <button key={o.id} className={`opt ${mine === o.id ? 'mine' : ''} ${row?.leader === o.id && row.status === 'agreed' ? 'lead' : ''}`} aria-pressed={mine === o.id} disabled={!!g.deal}
-            onClick={() => send('game:pick', { field: id, option: mine === o.id ? '' : o.id })}>
-            <span className="opt-name">{o.name}</span>
-            {names.length > 0 && <span className="opt-who">{names.join(', ')}</span>}
-            {no.length > 0 && <span className="opt-warn">Does not work for {no.join(', ')}</span>}
-            {mine === o.id && <span className="opt-check" aria-hidden="true">✓</span>}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function FieldSheet({ g, send, id, onClose }) {
-  const row = g.panel.find((f) => f.id === id);
+  const f = g.task.fields.find((x) => x.id === id);
+  const menu = (pid) => { onClose(); emitAck('game:menu', { sessionId: g.id, placeId: pid }); openBoard(`menu-${pid}`); };
   return (
     <Sheet title={row?.name || 'Pick'} onClose={onClose}>
       <p className="small muted" style={{ margin: 0 }}>{row?.personal
         ? 'Tap how you will do this. Each person can go their own way here: the plan shows what most people picked and lists anyone who differs.'
-        : 'Tap what you want. It counts the same as saying it in the chat, and your group sees it. The plan takes what most of the table wants.'}</p>
-      <Options g={g} send={send} id={id} />
-      <div className="row between"><span className={`chip ${row?.status === 'agreed' ? 'ok' : ''}`}>{STATUS[row?.status || 'open']}</span><button className="btn small" onClick={onClose}>Done</button></div>
+        : f?.kind === 'time' ? 'Mark every time you could make it, or tap one option. The plan takes what most of the table wants.'
+        : 'Tap what you want, or add your own option. It counts the same as saying it in the chat. The plan takes what most of the table wants.'}</p>
+      <PartWidget g={g} send={send} id={id} onMenu={menu} />
+      <div className="row between"><span className={`chip ${row?.status === 'agreed' ? 'ok' : ''}`}>{STATUS[row?.status || 'open']}</span>
+        <span className="row" style={{ gap: 6 }}><button className="btn small ghost" onClick={() => { onClose(); openBoard(`part-${id}`); }}>Whole board</button><button className="btn small" onClick={onClose}>Done</button></span></div>
     </Sheet>
   );
 }
 
-function BoardSheet({ g, send, onClose, open }) {
-  const listen = g.mode === 'listen';
-  const paused = !!g.pausedBy;
+function BoardSheet({ g, send, onClose, onAccept }) {
+  useEffect(() => { const k = (e) => e.key === 'Escape' && onClose(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
   return (
-    <Sheet title="The plan so far" onClose={onClose}>
-      {listen && (
-        <div className="row between">
-          <span className="small muted grow">{paused ? `Paused by ${g.pausedBy}. The AI is not reading new messages. Taps still count.` : 'The AI updates this from your chat. It never votes.'}</span>
-          <button className={`btn small ${paused ? '' : 'ghost'}`} onClick={() => send('game:pause-ai', { paused: !paused })}>{paused ? 'Resume AI' : 'Pause AI'}</button>
-        </div>
-      )}
-      {!listen && <p className="small muted" style={{ margin: 0 }}>At this table the plan fills in from taps. Tap a part to pick what you want.</p>}
-      {g.aiPaused && <div className="chip ai">A teammate is running the AI by hand</div>}
-      {g.hearing && <div className="hearing-full"><span className="label">What the AI is hearing</span><span>{g.hearing}</span></div>}
-      {g.panel.map((f) => (
-        <button key={f.id} className="plan-row tap" onClick={() => open({ type: 'field', id: f.id })}>
-          <div className="row between"><strong>{f.name}</strong><span className={`chip ${f.status === 'agreed' ? 'ok' : f.status === 'split' ? 'warn' : ''}`}>{STATUS[f.status]}</span></div>
-          {f.options.length ? (
-            <div className="stack" style={{ gap: 2, marginTop: 6 }}>
-              {f.options.map((o) => <div key={o.option} className="small"><span style={{ fontWeight: o.option === f.leader ? 800 : 500 }}>{o.name}</span> <span className="muted">· {o.who.join(', ')}</span></div>)}
-            </div>
-          ) : <div className="small muted" style={{ marginTop: 6 }}>Nobody has picked this yet. Tap to pick.</div>}
-        </button>
-      ))}
-      {g.quiet.length > 0 && <div className="small muted">Not heard from yet: {g.quiet.join(', ')}</div>}
-    </Sheet>
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="sheet tall" role="dialog" aria-modal="true" aria-label="The plan so far" onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-grab" aria-hidden="true" />
+        <div className="sheet-body stack"><PlanBoard g={g} send={send} onAccept={onAccept} onClose={onClose} /></div>
+      </div>
+    </div>
   );
 }
 
@@ -413,7 +394,7 @@ function InfoSheet({ g, send, onClose, humans }) {
       <span className="label">At this table</span>
       {g.players.map((p) => (
         <div key={p.pcode} className="seat">
-          <Avatar p={p} /><span className="grow">{p.name}{p.isYou ? ' (you)' : ''}{p.limit && !p.isYou ? <><br /><span className="small muted">Shared: {p.limit}</span></> : null}</span>
+          <Avatar p={p} /><span className="grow">{p.name}{p.isYou ? ' (you)' : ''}{p.limit && !p.isYou ? <><br /><span className="small muted">Shared: "{p.limitSay || p.limit}"</span></> : null}</span>
           {p.isAI ? <span className="chip ai">AI player</span> : p.away ? <span className="chip warn">Away</span> : null}
         </div>
       ))}
@@ -426,11 +407,15 @@ function InfoSheet({ g, send, onClose, humans }) {
 }
 
 // Shown when the AI is waiting for a private answer from you (which rides or times work), so it does not scroll away.
-function Waiting({ g }) {
+function Waiting({ g, openBoard }) {
   const b = (g.bookings || []).find((x) => x.status === 'asking' && x.mine === null && x.rider !== false);
+  const bill = !b && (g.bills || []).find((x) => x.status === 'open' && x.rows.some((r) => r.mine && !r.paid));
+  if (bill) return (
+    <button className="todo-bar" onClick={() => openBoard(`bill-${bill.id}`)}><span className="only-you">Only you</span><span className="grow">You have a payment waiting on the board.</span><strong>Pay</strong></button>
+  );
   if (!b) return null;
   return (
-    <button className="todo-bar" onClick={() => document.getElementById(`booking-${b.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })}>
+    <button className="todo-bar" onClick={() => openBoard(`booking-${b.id}`)}>
       <span className="only-you">Only you</span><span className="grow">The AI is waiting for your answer about the {b.kind === 'ride' ? 'ride' : 'table'}.</span><strong>Answer</strong>
     </button>
   );
@@ -451,7 +436,7 @@ function BottomBar({ g, send, open, humans }) {
   return (
     <div className="actionbar">
       <button className={`action limit ${alert ? 'alert' : ''}`} onClick={() => open({ type: 'limit' })} aria-label="Your private limit">
-        <span className="action-k">{shared ? 'Your limit · shared' : alert ? 'Your limit · the plan breaks it' : 'Your limit · tap to share'}</span>
+        <span className="action-k">{shared ? 'Your limit · shared' : alert ? 'Limit · plan breaks it' : 'Your limit · tap to share'}</span>
         <span className="action-v">{l.text}</span>
       </button>
       {g.deal ? <div className="action ready done"><span className="action-k">Done</span><span className="action-v">Plan locked</span></div>
@@ -496,7 +481,14 @@ function AcceptSheet({ g, send, onClose, open }) {
 }
 
 // ---------- messages and the message box ----------
-function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openField }) {
+const REACTIONS = ['👍', '❤️', '😂', '😮', '🎉', '👎'];
+function Reacts({ m, send }) {
+  if (!m.reacts?.length) return null;
+  return <div className="reacts">{m.reacts.map((r) => <button key={r.e} className={`react ${r.mine ? 'mine' : ''}`} title={r.who.join(', ')} aria-label={`${r.e} ${r.n}, from ${r.who.join(', ')}`} onClick={() => send('game:react', { msgId: m.id, emoji: r.e })}>{r.e} {r.n}</button>)}</div>;
+}
+const CARD_LABEL = { ride: 'Ride', table: 'Table booking', bill: 'Who owes what', map: 'Map', route: 'Route' };
+function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openField, openBoard }) {
+  const [picker, setPicker] = useState(null);
   const box = useRef(null);
   const atBottom = useRef(true);
   const [newBelow, setNewBelow] = useState(0); // messages that arrived while you were reading further up
@@ -519,12 +511,21 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
     <div className={`messages-wrap ${newBelow ? 'has-new' : ''}`}>
       <div className="messages" ref={box} aria-live="polite" onScroll={(e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; if (atBottom.current) { setNewBelow(0); seenId.current = last?.id || 0; } }}>
         {g.chat.map((m, i) => {
-          if (m.kind === 'booking') {
-            const b = (g.bookings || []).find((x) => x.id === m.bookingId);
-            return b?.kind === 'ride' ? <RideCard key={m.id} b={b} send={send} offset={g.clockOffset} /> : <TableCard key={m.id} b={b} send={send} />;
+          // Cards live on the plan board; the chat keeps one line that opens them.
+          if (m.kind === 'booking' || m.kind === 'bill' || m.kind === 'map') {
+            const bk = m.kind === 'booking' ? (g.bookings || []).find((x) => x.id === m.bookingId) : null;
+            const mp = m.kind === 'map' ? (g.maps || []).find((x) => x.id === m.mapId) : null;
+            const label = bk ? CARD_LABEL[bk.kind] : m.kind === 'bill' ? CARD_LABEL.bill : mp?.kind === 'route' ? CARD_LABEL.route : CARD_LABEL.map;
+            // a map of the options is the board's map of the place part; a route is its own card
+            const placePart = g.board?.placeField ? `part-${g.board.placeField}` : null;
+            const target = bk ? `booking-${bk.id}` : m.kind === 'bill' ? `bill-${m.billId}` : mp?.kind === 'route' || !placePart ? `map-${m.mapId}` : placePart;
+            return (
+              <div key={m.id} className="m-row ai first">
+                <span className="avatar ai" aria-hidden="true">AI</span>
+                <button className="card-ref" onClick={() => openBoard(target)}><span className="card-ref-k">{label}</span><span className="card-ref-v">{m.text}</span><span className="card-ref-go">On the board ›</span></button>
+              </div>
+            );
           }
-          if (m.kind === 'bill') return <BillCard key={m.id} b={(g.bills || []).find((x) => x.id === m.billId)} text={m.text} send={send} deal={!!g.deal} />;
-          if (m.kind === 'map') return <MapCard key={m.id} m={(g.maps || []).find((x) => x.id === m.mapId)} />;
           if (m.kind === 'plan') return <PlanCard key={m.id} g={g} m={m} onAccept={onAccept} />;
           if (m.kind === 'system') return <div key={m.id} className={`m-system ${m.host ? 'host' : ''}`}>{m.text}</div>;
           if (m.kind === 'pick') return <div key={m.id} className="m-pick">{m.from === g.me.pcode ? m.text.replace(m.name, 'You').replace('their pick', 'your pick') : m.text.replace(`with ${g.me.name}:`, 'with you:')}</div>;
@@ -552,6 +553,7 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
                   {m.blocks?.map((b, k) => <Block key={k} b={b} g={g} send={send} />)}
                   {m.actions === 'limit' && unshared && <ShareOptions sayMyself={sayMyself} share={share} />}
                   {m.kind === 'private' && m.answer && !g.deal && <div className="bubble-actions"><button className="metoo" onClick={followUp}>Ask a follow-up privately</button></div>}
+                  {m.board === 'tasks' && <div className="bubble-actions"><button className="metoo" onClick={() => openBoard('part-tasks')}>See the to-do list</button></div>}
                 </div>
               </div>
             );
@@ -563,11 +565,16 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
           return (
             <div key={m.id} className={`m-row ${mine ? 'mine' : ''} ${first ? 'first' : ''}`}>
               {!mine && (first && p ? <Avatar p={p} /> : <span className="avatar-gap" />)}
-              <div className={`bubble ${mine ? 'mine' : ''} ${m.kind} ${m.private ? 'private-q' : ''}`}>
-                {(first || label) && !mine && <div className="m-name" style={{ color: p?.color }}>{m.name}{label ? <span className="m-tag"> {label}</span> : null}</div>}
-                {mine && label && <div className="m-name m-tag">You {label}{m.private && <span className="only-you">Only you see this</span>}</div>}
-                {m.text}
-                {more.length > 0 && <div className="bubble-actions"><button className="metoo" onClick={() => send('game:metoo', { msgId: m.id })}>Me too: {more.map(optName).join(', ')}</button></div>}
+              <div className="m-col">
+                <div className={`bubble ${mine ? 'mine' : ''} ${m.kind} ${m.private ? 'private-q' : ''}`} onClick={(e) => { if (!m.private && !g.deal && e.target.tagName !== 'BUTTON') setPicker(picker === m.id ? null : m.id); }}>
+                  {(first || label) && !mine && <div className="m-name" style={{ color: p?.color }}>{m.name}{label ? <span className="m-tag"> {label}</span> : null}</div>}
+                  {mine && label && <div className="m-name m-tag">You {label}{m.private && <span className="only-you">Only you see this</span>}</div>}
+                  {m.text}
+                  {more.length > 0 && <div className="bubble-actions"><button className="metoo" onClick={() => send('game:metoo', { msgId: m.id })}>Me too: {more.map(optName).join(', ')}</button></div>}
+                </div>
+                {picker === m.id && <div className="react-picker" role="group" aria-label="React">{REACTIONS.map((e) => <button key={e} aria-label={`React ${e}`} onClick={() => { send('game:react', { msgId: m.id, emoji: e }); setPicker(null); }}>{e}</button>)}</div>}
+                <Reacts m={m} send={send} />
+                {m.saved?.length > 0 && <div className="saved" title="What the AI saved from this message">Saved: {m.saved.join(' · ')}</div>}
               </div>
             </div>
           );
@@ -682,7 +689,9 @@ function Results({ g }) {
       <section className={`result-card ${g.deal ? 'good' : ''}`}>
         <span className="small">{g.deal ? `Everyone accepted after ${msToClock(g.deal.t)}.` : 'The chat ended before everyone accepted a complete plan.'}</span>
         {g.task.fields.map((f) => <div key={f.id} className="row between"><span className="muted small">{f.name}</span><strong className="plan-val">{name(f)}<OwnLine own={g.ways?.[f.id]} /></strong></div>)}
+        {g.deal && <CalendarLinks g={g} plan={plan} />}
       </section>
+      {g.board?.todos?.length > 0 && <section className="card stack" style={{ gap: 6 }}><span className="label">To-do</span>{g.board.todos.map((t) => <div key={t.id} className="small">{t.done ? '✓ ' : '○ '}{t.text}{t.ownerName ? <span className="muted"> · {t.mine ? 'you' : t.ownerName}</span> : null}</div>)}</section>}
       {o && (
         <div className="stats">
           <div className="stat"><strong>{o.surfaced} of {o.of}</strong><span>private limits came up{o.deal ? ' before the plan locked' : ''}</span></div>

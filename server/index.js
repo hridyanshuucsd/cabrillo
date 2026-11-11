@@ -184,6 +184,15 @@ io.on('connection', (socket) => {
   socket.on('game:ask', ({ sessionId, text, private: priv }) => table(sessionId)?.ask(id.key, text, { private: !!priv }));
   socket.on('game:booking-answer', ({ sessionId, bookingId, ok }) => table(sessionId)?.bookingAnswer(id.key, String(bookingId), ok));
   socket.on('game:bill-pay', ({ sessionId, billId, rowId, method }) => table(sessionId)?.payBill(id.key, String(billId), rowId, String(method)));
+  // the plan board
+  socket.on('game:add-option', ({ sessionId, field, name, geo }, cb) => ack(cb, table(sessionId)?.addOption(id.key, String(field), name, geo) || { error: 'Not available.' }));
+  socket.on('game:places', safe(async ({ sessionId, query }, cb) => { const t = table(sessionId); ack(cb, t ? { results: await t.findPlaces(query) } : { results: [] }); }));
+  socket.on('game:avail', ({ sessionId, field, option, value }) => table(sessionId)?.setAvail(id.key, String(field), String(option), value ? String(value) : null));
+  socket.on('game:react', ({ sessionId, msgId, emoji }) => table(sessionId)?.react(id.key, msgId, String(emoji)));
+  socket.on('game:todo', ({ sessionId, action, ...a }) => table(sessionId)?.todo(id.key, String(action), a));
+  socket.on('game:menu', safe(async ({ sessionId, placeId }, cb) => ack(cb, (await table(sessionId)?.openMenu(id.key, String(placeId))) || { error: 'Not available.' })));
+  socket.on('game:order', ({ sessionId, placeId, itemId, delta }) => table(sessionId)?.order(id.key, String(placeId), String(itemId), delta));
+  socket.on('game:menu-bill', ({ sessionId, placeId }) => table(sessionId)?.menuBill(id.key, String(placeId)));
   socket.on('game:metoo', ({ sessionId, msgId }) => table(sessionId)?.metoo(id.key, msgId));
   socket.on('game:accept', ({ sessionId, value, fits }) => table(sessionId)?.accept(id.key, value, fits));
 

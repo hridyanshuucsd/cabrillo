@@ -177,8 +177,8 @@ async function clash(label) {
   const mine = () => t.chat.filter((m) => m.from === ari.pcode && ['chat', 'limit'].includes(m.kind)).map((m) => m.text);
   ck('the AI player whose limit is in the way says so, once, with another option', ari.revealed && mine().filter((x) => /saturday/i.test(x)).length === 1, JSON.stringify(mine()));
   await until(() => t.plan.when === 'sat_am', 4000);
-  await until(() => t.chat.some((m) => m.from === 'AI' && /does not fit the limit Ari shared/.test(m.text)), 4000);
-  ck('the listening AI speaks up for the limit the AI player shared, by first name', t.chat.some((m) => m.from === 'AI' && /does not fit the limit Ari shared/.test(m.text)), JSON.stringify(t.plan));
+  await until(() => t.chat.some((m) => m.from === 'AI' && /does not fit what Ari shared/.test(m.text)), 4000);
+  ck('the listening AI speaks up for the limit the AI player shared, by first name', t.chat.some((m) => m.from === 'AI' && /does not fit what Ari shared/.test(m.text)), JSON.stringify(t.plan));
   const n = mine().length;
   t.say('u1', 'saturday morning please'); await sleep(1200);
   t.say('u1', 'saturday morning it is'); await sleep(1200);
@@ -245,7 +245,47 @@ async function payByPerson(label) {
   t.hostAdvance();
 }
 
+// The plan board: options people add, availability, reactions, tasks, a menu and its bill.
+async function boardOps(label) {
+  process.env.OPENAI_API_KEY = ''; process.env.FAKE_MODEL = ''; process.env.PLACES_FAKE = '1';
+  const room = { code: `G${Date.now() % 100000}`, kind: 'quick', task: 'dinner', autoStart: true };
+  const t = new Table({ io, room, humans: [{ key: 'u1', name: 'Maya', userId: null, isGuest: true }, { key: 'u2', name: 'Dev', userId: null, isGuest: true }], mode: 'listen', taskId: 'dinner', number: 1 });
+  const [maya, dev] = t.players;
+  await t.start(); t.ready('u1'); t.ready('u2');
+  const ck = (name, ok, extra) => check(`${label}: ${name}`, ok, extra);
+  ck('each table has its own copy of the options', t.task.fields !== (await import('../server/tasks.js')).taskById('dinner').fields);
+  const r = t.addOption('u1', 'when', 'Thursday 7 pm');
+  ck('a person adds their own time, and it is their pick', r.ok && t.prefs[maya.pcode].when === r.id && t.task.fields.find((f) => f.id === 'when').options.length === 4);
+  ck('another table does not see it', (await import('../server/tasks.js')).taskById('dinner').fields.find((f) => f.id === 'when').options.length === 3);
+  t.setAvail('u2', 'when', 'fri8', 'yes'); t.setAvail('u2', 'when', r.id, 'yes');
+  ck('availability: Dev said yes to two times and gets the one more people can make', t.prefs[dev.pcode].when === r.id, JSON.stringify(t.prefs[dev.pcode]));
+  ck('the time part is settled once both pick it', t.panel().find((f) => f.id === 'when').status === 'agreed');
+  const places = await t.findPlaces('tacos');
+  const p2 = t.addOption('u2', 'where', places[0].name, places[0]);
+  ck('a real place found by search becomes an option on the map', p2.ok && t.boardView(maya).places.some((x) => x.id === p2.id && x.address));
+  t.say('u1', 'ramen in hillcrest sounds good'); await sleep(50);
+  const msg = t.chat.find((m) => m.text === 'ramen in hillcrest sounds good');
+  ck('the AI shows what it saved from a message', msg.saved?.[0] === 'Maya → Ramen in Hillcrest', JSON.stringify(msg.saved));
+  t.react('u2', msg.id, '👍');
+  ck('reactions show who reacted', t.viewFor('u1').chat.find((m) => m.id === msg.id).reacts?.[0]?.who[0] === 'Dev');
+  t.todo('u1', 'add', { text: 'Book a table' }); const td = t.todos[0];
+  t.todo('u2', 'claim', { id: td.id }); t.todo('u2', 'toggle', { id: td.id });
+  ck('a shared task: added, claimed and done by different people', td.owner === dev.pcode && td.done && t.boardView(maya).todos[0].ownerName === 'Dev');
+  await t.openMenu('u1', 'hillcrest');
+  const menu = t.menus.hillcrest;
+  ck('a restaurant gets a menu (a marked sample without a key)', menu.items.length >= 5 && menu.sample);
+  t.order('u2', 'hillcrest', 'i0', 1); t.order('u2', 'hillcrest', 'i3', 1); t.order('u1', 'hillcrest', 'i1', 1);
+  t.menuBill('u1', 'hillcrest');
+  const bill = t.bills.at(-1);
+  const devSub = menu.items[0].price + menu.items[3].price;
+  ck('splitting the menu: Dev owes Maya his order plus 20%', bill && bill.rows.length === 1 && bill.rows[0].to === maya.pcode && Math.abs(bill.rows[0].amount - devSub * 1.2) < 0.02, JSON.stringify(bill?.rows));
+  ck('the board keeps a history of changes', t.boardView(maya).changes >= 6);
+  ck('nothing on the board shows a player code', !/"name":"[PA]0\d"/.test(JSON.stringify(t.boardView(maya))));
+  t.hostAdvance();
+}
+
 try {
+  await boardOps('board');
   await beach('beach house, listening', { mode: 'listen' });
   await beach('beach house, answer-only', { mode: 'ask' });
   await beach('beach house, model', { mode: 'listen', key: true });

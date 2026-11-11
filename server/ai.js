@@ -152,6 +152,7 @@ export function cleanBlocks(blocks, task) {
       if (items.length) out.push({ type: 'compare', title, items });
     } else if (b.type === 'pick' && task.fields.some((f) => f.id === b.field)) out.push({ type: 'pick', field: b.field });
     else if (b.type === 'map') out.push({ type: 'map' });
+    else if (b.type === 'todo' && strs(b.items, 8, 120).length) out.push({ type: 'todo', items: strs(b.items, 8, 120) });
     else if (b.type === 'pay') {
       const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 10).map((r) => ({ who: str(r?.who, 40), to: str(r?.to, 40), for: str(r?.for, 60), amount: Math.round(Number(r?.amount) * 100) / 100 }))
         .filter((r) => r.who && r.amount > 0 && r.amount < 100000);
@@ -203,7 +204,7 @@ Rules:
 - Everyone at the table is a student at UC San Diego (La Jolla, San Diego, California). Unless they say otherwise, assume they mean places in and around San Diego. Never ask for their location.
 - When you have web search, use it for real-world and current information (places near campus, hours, prices, events, weather, reviews) and name real places. Without it, give your best general knowledge of San Diego and say that details such as hours and prices may have changed.
 - People appear as codes such as P01, and AI players by first name. When you mention a person, write the code exactly as given (for example P01); never invent a name.
-- Plain language. No emojis, no em dashes, no contractions. Keep "text" to at most 3 sentences; put detail in blocks.
+- Plain language. No emojis, no em dashes, no contractions. Keep "text" short: at most 2 sentences and 30 words. The chat moves fast; put any detail in blocks, which appear on the group's plan board.
 - Use earlier questions and answers in the chat for follow-ups ("what about the second one").
 - For pros and cons or a comparison, use one compare block. Compare only the options asked about; "the top two" means the two options with the most support so far.
 Answer with one JSON object and nothing else:
@@ -216,7 +217,8 @@ Answer with one JSON object and nothing else:
 {"type": "pick", "field": "<part id>"}    (shows the options of one part of the plan as buttons to tap)
 {"type": "map"}                           (shows the place options on a map)
 {"type": "pay", "title": "...", "rows": [{"who": "<code or AI player name>", "amount": 25.5, "to": "<code, AI player name, or a payee such as the restaurant>", "for": "..."}]}   (who owes whom how much, as a card each person can pay from through the AI; use it when people ask who owes what, want to split a cost, or want to pay; amounts in dollars, worked out from the facts given)
-When people ask who owes what, use a pay block (not a table) so they can pay from it.`;
+{"type": "todo", "items": ["...", ...]}   (tasks the group still has to do; they are added to the group's shared to-do list, where people can claim them)
+When people ask who owes what, use a pay block (not a table) so they can pay from it. When people ask what else they need to do, use a todo block.`;
 const PRIVATE_NOTE = `
 This question was asked privately: only the person who asked sees your answer. Speak to them directly ("you"). You may help them think through their own situation, or how to raise something with the group.
 You do not know their private limit unless they typed it in this private exchange. If they mention "my limit" without saying what it is, do not assume what it is about (money, time, travel or anything else): give wording they can fill in, or ask them what it is.
@@ -275,6 +277,31 @@ async function searchAnswer(system, user) {
 }
 // Markdown links and citation markers that search answers put inside the text: the sources are shown as links instead.
 const unlink = (t) => String(t).replace(/\s*\(\[[^\]]*\]\([^)]*\)\)/g, '').replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '$1').replace(/【[^】]*】/g, '');
+
+// ---------- menus ----------
+// A restaurant's menu: real dishes and prices from web search when that works, otherwise a sample menu for that kind
+// of food, clearly marked as a sample.
+const SAMPLE_MENUS = [
+  [/korean|bbq|barbecue|kbbq/i, [['Bulgogi combo', 24], ['Pork belly', 22], ['Short rib', 29], ['Kimchi fried rice', 14], ['Japchae', 13], ['Tofu stew', 15]]],
+  [/pizza|italian/i, [['Margherita pizza', 16], ['Pepperoni pizza', 18], ['Caesar salad', 11], ['Garlic knots', 7], ['Penne alla vodka', 19], ['Tiramisu', 9]]],
+  [/ramen|japanese|sushi|omakase/i, [['Tonkotsu ramen', 16], ['Spicy miso ramen', 17], ['Veggie ramen', 15], ['Gyoza', 8], ['Karaage', 9], ['Matcha ice cream', 6]]],
+  [/taco|mexican|old town/i, [['Carne asada tacos', 13], ['Fish tacos', 14], ['California burrito', 12], ['Veggie burrito', 11], ['Chips and guacamole', 8], ['Horchata', 4]]],
+  [/dim sum|chinese|convoy/i, [['Har gow', 8], ['Siu mai', 8], ['BBQ pork buns', 7], ['Turnip cake', 7], ['Chow mein', 13], ['Egg tarts', 6]]],
+  [/cafe|coffee|bakery|brunch/i, [['Latte', 6], ['Avocado toast', 12], ['Breakfast burrito', 13], ['Croissant', 5], ['Acai bowl', 13], ['Iced tea', 4]]],
+  [/court|price center|campus/i, [['Burger and fries', 11], ['Chicken bowl', 12], ['Burrito', 10], ['Salad', 10], ['Boba tea', 6], ['Smoothie', 7]]]
+];
+export async function menuFor(name, address) {
+  if (wantsSearch('menu near') && process.env.AI_SEARCH !== 'off') {
+    try {
+      const r = await searchAnswer('Find the current menu of the named restaurant in San Diego. Answer with JSON only: {"items": [{"name": "...", "price": 12.5, "note": "..."}]} with 6 to 10 popular items and their prices in US dollars. If you cannot find this restaurant, answer {"items": []}.', `Restaurant: ${name}, ${address}`);
+      const j = r?.text ? jsonObjects(unfence(unlink(r.text))).map((o) => o.value).find((v) => Array.isArray(v?.items)) : null;
+      const items = (j?.items || []).map((x) => ({ name: str(x?.name, 50), price: Math.round(Number(x?.price) * 100) / 100, note: str(x?.note, 60) })).filter((x) => x.name && x.price > 0 && x.price < 200).slice(0, 10);
+      if (items.length >= 3) return { items, source: r.source, links: r.links, sample: false };
+    } catch (e) { console.error('Menu search failed, using a sample menu:', e.message); }
+  }
+  const hit = SAMPLE_MENUS.find(([re]) => re.test(`${name} ${address}`)) || [null, [['House special', 15], ['Salad', 10], ['Sandwich', 12], ['Soup', 8], ['Dessert', 7], ['Drink', 4]]];
+  return { items: hit[1].map(([n, price]) => ({ name: n, price })), source: 'sample', sample: true };
+}
 
 export async function answerQuestion(question, ctx) {
   if (wantsSearch(question)) {

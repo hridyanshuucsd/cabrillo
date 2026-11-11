@@ -27,11 +27,57 @@ export function placeField(task) {
   return task.fields.find((f) => f.id === id) ? id : null;
 }
 export function placeOf(task, optionId) {
-  const ll = GEO[task.id]?.[optionId];
-  if (!ll) return null;
   const f = task.fields.find((x) => x.id === placeField(task));
   const o = f?.options.find((x) => x.id === optionId);
-  return { id: optionId, name: o?.name || optionId, lat: ll[0], lng: ll[1], restaurant: cap(o?.place || RESTAURANT[optionId] || `Restaurant near ${o?.name || 'there'}`) };
+  // a place someone added from a search carries its own coordinates and address
+  const ll = o?.geo ? [o.geo.lat, o.geo.lng] : GEO[task.id]?.[optionId];
+  if (!ll) return null;
+  return { id: optionId, name: o?.name || optionId, lat: ll[0], lng: ll[1], address: o?.geo?.address || null, added: !!o?.geo,
+    restaurant: cap(o?.place || (o?.geo?.food ? o.name : null) || RESTAURANT[optionId] || `Restaurant near ${o?.name || 'there'}`) };
+}
+
+// What kind of widget a part of the plan gets: a map for a place, an availability grid for a time, the way there,
+// money, or plain option cards.
+const TIME_IDS = new Set(['when', 'day', 'time', 'meet', 'start', 'draft', 'lease']);
+export function fieldKind(task, f) {
+  if (placeField(task) === f.id) return 'place';
+  if (TIME_IDS.has(f.id)) return 'time';
+  if (f.personal) return 'travel';
+  if (/budget|rent/.test(f.id)) return 'money';
+  return 'options';
+}
+
+// Real places for "add a place": OpenStreetMap's Nominatim search, limited to San Diego County. Cached, and at most
+// one request a second for the whole server, as Nominatim's usage policy asks. PLACES_FAKE=1 answers locally (tests).
+const placeCache = new Map();
+let lastPlaceAt = 0;
+const SD_BOX = '-117.60,33.51,-116.08,32.53'; // west, north, east, south
+export async function searchPlaces(query) {
+  const q = String(query || '').trim().slice(0, 80);
+  if (q.length < 2) return [];
+  if (placeCache.has(q.toLowerCase())) return placeCache.get(q.toLowerCase());
+  if (process.env.PLACES_FAKE) {
+    const out = [0, 1, 2].map((i) => ({ name: `${q.replace(/\b\w/g, (c) => c.toUpperCase())}${i ? ` ${i + 1}` : ''}`, address: `${100 + i} Example St, San Diego, CA`, lat: 32.80 + i * 0.01, lng: -117.20 + i * 0.01, kind: 'restaurant', food: true }));
+    placeCache.set(q.toLowerCase(), out); return out;
+  }
+  const wait = 1100 - (Date.now() - lastPlaceAt);
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastPlaceAt = Date.now();
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&addressdetails=1&bounded=1&viewbox=${SD_BOX}&q=${encodeURIComponent(q)}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(5000), headers: { 'User-Agent': 'Cabrillo class project (UC San Diego)', 'Accept-Language': 'en' } });
+    if (!r.ok) return [];
+    const rows = await r.json();
+    const out = rows.map((x) => {
+      const a = x.address || {};
+      const name = x.name || String(x.display_name).split(',')[0];
+      const address = [[a.house_number, a.road].filter(Boolean).join(' '), a.neighbourhood || a.suburb, a.city || a.town || 'San Diego'].filter(Boolean).join(', ');
+      return { name: name.slice(0, 60), address: address.slice(0, 90), lat: Number(x.lat), lng: Number(x.lon), kind: x.type || x.category,
+        food: ['restaurant', 'cafe', 'fast_food', 'bar', 'pub', 'food_court', 'ice_cream'].includes(x.type) };
+    }).filter((x) => x.name && Number.isFinite(x.lat));
+    placeCache.set(q.toLowerCase(), out);
+    return out;
+  } catch { return []; }
 }
 export function placesOf(task) {
   const f = task.fields.find((x) => x.id === placeField(task));

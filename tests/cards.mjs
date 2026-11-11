@@ -52,32 +52,33 @@ try {
   await a.getByLabel('Message').waitFor();
   const say = async (p, t) => { await p.getByLabel('Message').fill(t); await p.getByRole('button', { name: 'Send', exact: true }).click(); await p.waitForTimeout(250); };
 
-  // The AI adds a map by itself as soon as two places are being compared.
+  // Cards live on the plan board; the chat keeps one line that opens them.
+  const board = async (p) => { if (!(await p.getByRole('dialog', { name: 'The plan so far' }).count())) { await p.getByRole('button', { name: 'Plan board' }).click(); await p.getByRole('dialog', { name: 'The plan so far' }).waitFor(); } return p.getByRole('dialog', { name: 'The plan so far' }); };
+  const shut = async (p) => { const d = p.getByRole('dialog', { name: 'The plan so far' }); if (await d.count()) await d.getByRole('button', { name: 'Close' }).first().click(); };
+
+  // Two places compared: the AI points to the map on the board.
   await say(a, 'Old Town for tacos sounds good');
   await say(b, 'I was thinking Balboa Park, honestly');
-  check('the AI adds a map when two places are compared, without being asked', await wait(a.getByRole('group', { name: 'Map of the options' })));
-  check('the map says why the AI added it', await wait(a.getByText('The AI added this because you are comparing places.').first(), 3000));
-  await say(b, 'ok fine, Old Town works for me too');
-  await a.waitForTimeout(1500); // tiles
-  await a.getByRole('group', { name: 'Map of the options' }).scrollIntoViewIfNeeded();
-  await a.screenshot({ path: `${DIR}/01_map_card.png` });
-  check('the map card lists drive times and Google Maps directions', (await a.getByRole('link', { name: 'Directions' }).count()) >= 4);
-  await a.getByRole('button', { name: 'Open the map full screen' }).first().click();
+  check('the AI points to the map when two places are compared, without being asked', await wait(a.getByRole('button', { name: /^Map .*On the board/ })));
+  await a.getByRole('button', { name: /^Map .*On the board/ }).first().click();
+  const where = (await board(a)).locator('#part-where');
+  check('the board shows the places on a map with directions', await wait(where.locator('.leaflet-container'), 4000) && (await where.getByRole('link', { name: 'Directions' }).count()) >= 4);
   await a.waitForTimeout(1200);
-  await a.screenshot({ path: `${DIR}/02_map_full.png` });
-  await a.getByRole('button', { name: 'Close' }).click();
+  await a.screenshot({ path: `${DIR}/01_board_where.png` });
+  await shut(a);
+  await say(b, 'ok fine, Old Town works for me too');
 
-  // The AI prices a ride by itself once the plan says rideshare.
+  // The plan says rideshare: the AI prices a ride on the board.
   await say(a, 'let us take a rideshare there');
   await say(c, 'rideshare is fine with me');
-  check('the AI prices a ride when the plan says rideshare, without being asked', await wait(a.getByRole('group', { name: 'Ride to Old Town' })));
-  check('the AI says why it added the ride', await wait(a.getByText('The AI added this because the plan says rideshare.').first(), 3000));
-  await a.waitForTimeout(1500);
-  await a.getByRole('group', { name: 'Ride to Old Town' }).scrollIntoViewIfNeeded();
+  check('the AI prices a ride when the plan says rideshare, without being asked', await wait(a.getByRole('button', { name: /^Ride .*On the board/ })));
+  check('the chat shows one line, not the whole card', (await a.locator('.messages').getByRole('group', { name: 'Ride to Old Town' }).count()) === 0);
+  const ride = (p) => p.getByRole('dialog', { name: 'The plan so far' }).getByRole('group', { name: 'Ride to Old Town' });
+  for (const p of ps) await board(p);
+  check('the board says why the AI added the ride', await wait(ride(a).getByText('The AI added this because the plan says rideshare.'), 3000));
+  await ride(a).scrollIntoViewIfNeeded(); await a.waitForTimeout(800);
   await a.screenshot({ path: `${DIR}/03_ride_options.png` });
-  const ride = (p) => p.getByRole('group', { name: 'Ride to Old Town' });
   check('three car types with prices, answered privately', (await ride(a).getByRole('checkbox').count()) === 3 && (await ride(a).getByText('Only you see this').count()) === 1);
-  // each person says privately which rides work; one person changes their mind before the result
   await ride(a).getByRole('checkbox', { name: /^XL/ }).click();
   await ride(a).getByRole('button', { name: 'Send my answer' }).click();
   await ride(b).getByText('1 of 3 answered').waitFor({ timeout: 4000 });
@@ -88,34 +89,47 @@ try {
   await ride(a).getByRole('checkbox', { name: /^Green/ }).click();
   await ride(a).getByRole('button', { name: 'Send my answer' }).click();
   check('a person can change their private answer before the result', await wait(ride(a).getByText(/You said these work for you: Standard, Green/), 4000));
-  await a.screenshot({ path: `${DIR}/03b_ride_private_answer.png` });
   await ride(b).getByRole('checkbox', { name: /^Standard/ }).click(); await ride(b).getByRole('checkbox', { name: /^XL/ }).click();
   await ride(b).getByRole('button', { name: 'Send my answer' }).click();
   for (const o of [/^Standard/, /^XL/, /^Green/]) await ride(c).getByRole('checkbox', { name: o }).click();
   await ride(c).getByRole('button', { name: 'Send my answer' }).click();
-  check('the AI books the cheapest ride that works for everyone', await wait(a.getByText(/Standard is the cheapest ride that works for everyone/).first()) && await wait(a.getByText('Booked (demo)').first()));
-  check('a driver is found', await wait(a.getByText(/is arriving in/), 6000));
-  await a.waitForTimeout(800);
-  await a.getByRole('group', { name: 'Ride to Old Town' }).scrollIntoViewIfNeeded();
+  check('the AI books the cheapest ride that works for everyone', await wait(ride(a).getByText('Booked (demo)')));
+  check('a driver is found', await wait(ride(a).getByText(/is arriving in/), 6000));
+  await ride(a).scrollIntoViewIfNeeded(); await a.waitForTimeout(800);
   await a.screenshot({ path: `${DIR}/04_ride_driver_arriving.png` });
-  check('the car drives the route', await wait(a.getByText(/On the way ·/), 10000));
-  await a.waitForTimeout(2500);
-  await a.getByRole('group', { name: 'Ride to Old Town' }).scrollIntoViewIfNeeded();
-  await a.screenshot({ path: `${DIR}/05_ride_on_trip.png` });
-  check('the ride arrives', await wait(a.getByText('You have arrived at Old Town'), 16000));
+  check('the car drives the route', await wait(ride(a).getByText(/On the way ·/), 10000));
+  check('the ride arrives', await wait(ride(a).getByText('You have arrived at Old Town'), 16000));
+  for (const p of ps) await shut(p);
+  check('the booking result is also said in the chat', await wait(a.getByText(/Standard is the cheapest ride that works for everyone/).first(), 2000));
 
   await say(c, 'can we also reserve a table for lunch');
-  check('asking for a table posts a table card', await wait(a.getByRole('group', { name: /Booking: Table for 3/ })));
-  const tbl = (p) => p.getByRole('group', { name: /Booking: Table for 3/ });
-  await a.waitForTimeout(1200);
-  await tbl(a).scrollIntoViewIfNeeded();
+  check('asking for a table adds a table card to the board', await wait(a.getByRole('button', { name: /^Table booking .*On the board/ })));
+  const tbl = (p) => p.getByRole('dialog', { name: 'The plan so far' }).getByRole('group', { name: /Booking: Table for 3/ });
+  for (const p of ps) await board(p);
+  await tbl(a).scrollIntoViewIfNeeded(); await a.waitForTimeout(800);
   await a.screenshot({ path: `${DIR}/06_table_card.png` });
-  // a: the first two times; b: the last two; c: all three. The earliest time that works for everyone is the second.
   const times = await tbl(a).getByRole('checkbox').allInnerTexts();
   for (const [p, idx] of [[a, [0, 1]], [b, [1, 2]], [c, [0, 1, 2]]]) { for (const i of idx) await tbl(p).getByRole('checkbox').nth(i).click(); await tbl(p).getByRole('button', { name: 'Send my answer' }).click(); }
-  check('the table is reserved at the earliest time that works for everyone', await wait(a.getByText(`Reserved for 3 · ${times[1]}`)), times[1]);
-  await a.getByRole('group', { name: /Booking: Table for 3/ }).scrollIntoViewIfNeeded();
+  check('the table is reserved at the earliest time that works for everyone', await wait(tbl(a).getByText(`Reserved for 3 · ${times[1]}`)), times[1]);
   await a.screenshot({ path: `${DIR}/07_table_reserved.png` });
+
+  // The board's own widgets: a custom option, the availability grid, a menu, a task, and a reaction.
+  const bd = await board(a);
+  await bd.getByRole('textbox', { name: 'Add an option to budget' }).fill('About $20');
+  await bd.locator('#part-budget').getByRole('button', { name: 'Add' }).click();
+  check('anyone can add their own option', await wait(bd.locator('#part-budget').getByRole('button', { name: /^About \$20/ }), 3000));
+  const cells = bd.locator('#part-when button.cell');
+  await cells.nth(0).click(); await a.waitForTimeout(300); await cells.nth(2).click(); await a.waitForTimeout(300);
+  check('the availability grid takes several times', (await bd.locator('#part-when .cell.yes').count()) >= 2);
+  await bd.getByRole('textbox', { name: 'Add a task' }).fill('Bring sunscreen');
+  await bd.locator('#part-tasks').getByRole('button', { name: 'Add' }).click();
+  await (await board(b)).getByRole('button', { name: 'I will do it' }).first().click();
+  check('a task added by one person can be claimed by another', await wait(bd.getByText(/Dev will do it/), 3000));
+  await a.screenshot({ path: `${DIR}/08_board_widgets.png` });
+  for (const p of ps) await shut(p);
+  await b.locator('.messages .bubble', { hasText: 'Old Town for tacos sounds good' }).click();
+  await b.getByRole('button', { name: 'React 👍' }).click();
+  check('people can react to messages', await wait(a.getByRole('button', { name: /👍 1/ }), 3000));
   const sideways = await a.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
   check('no sideways scrolling with the cards', !sideways);
   const logs = await (await fetch(`${BASE}/api/export/${code}/logs.csv`, { headers: { cookie: (await host.context().cookies()).map((x) => `${x.name}=${x.value}`).join('; ') } })).text();

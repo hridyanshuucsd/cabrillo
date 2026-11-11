@@ -26,7 +26,7 @@ export function MapCard({ m }) {
   if (m.kind === 'route') return <RouteCard m={m} />;
   const pts = [{ ...m.origin, kind: 'pickup' }, ...m.places.map((p, i) => ({ ...p, kind: 'place', label: i + 1, active: p.id === m.leader }))];
   return (
-    <div className="card-ai mapcard" role="group" aria-label="Map of the options">
+    <div className="card-ai mapcard" id={`map-${m.id}`} role="group" aria-label="Map of the options">
       <button className="map-tap" onClick={() => setFull(true)} aria-label="Open the map full screen"><MapView points={pts} height={150} /><span className="map-hint">Tap to open</span></button>
       <div className="card-ai-body">
         {m.auto && <div className="why">The AI added this because you are comparing places.</div>}
@@ -201,7 +201,7 @@ function RouteCard({ m }) {
   const pts = [{ ...m.origin, kind: 'pickup' }, { ...m.place, kind: 'dropoff' }];
   const title = `Getting to ${m.place.name}`;
   return (
-    <div className="card-ai route" role="group" aria-label={title}>
+    <div className="card-ai route" id={`map-${m.id}`} role="group" aria-label={title}>
       <button className="map-tap" onClick={() => setFull(true)} aria-label="Open the route full screen"><MapView points={pts} route={m.route} height={150} /><span className="map-hint">Tap to open</span></button>
       <div className="card-ai-body">
         {m.auto && <div className="why">The AI added this because the plan has a place and says {transit ? 'bus or trolley' : 'carpool'}.</div>}
@@ -253,7 +253,7 @@ export function BillCard({ b, text, send, deal }) {
   const pay = (r, method) => send('game:bill-pay', { billId: b.id, rowId: r.id, method });
   const open = b.status === 'open';
   return (
-    <div className={`card-ai bill ${b.status === 'stale' ? 'stale' : ''}`} role="group" aria-label={b.title}>
+    <div className={`card-ai bill ${b.status === 'stale' ? 'stale' : ''}`} id={`bill-${b.id}`} role="group" aria-label={b.title}>
       <div className="card-ai-body">
         {text && <div className="why">{text}</div>}
         <div className="row between" style={{ alignItems: 'flex-start' }}>

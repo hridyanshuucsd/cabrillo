@@ -54,7 +54,7 @@ async function run(label, port, env, extraArgs = []) {
 
     const before = await aiLines();
     await say('where should we meet guys?');
-    check(`${label}: a question about where gets an options card from the AI`, await wait(a.getByText(/(stands|Nobody has picked where yet|picked .* for where)/).first()));
+    check(`${label}: a question about where gets an options card from the AI`, await wait(a.getByText(/(Options for where|Picks for where)/).first()));
     await a.waitForTimeout(9000);
     check(`${label}: AI players reply to the question`, (await aiLines()) > before, `(${(await aiLines()) - before} new AI player messages)`);
     await a.screenshot({ path: `${DIR}/${label}_01_where.png` });
@@ -106,14 +106,17 @@ async function run(label, port, env, extraArgs = []) {
     // pick everything; AI players follow; the plan card and the route card appear
     for (const [fl, op] of [['Where', 'La Jolla Cove'], ['When', 'Sunday afternoon'], ['Getting there', 'Bus or trolley'], ['Budget per person', 'Under $15']]) {
       await a.locator(`.pchip[aria-label^="${fl}:"]`).click();
-      const btn = a.getByRole('dialog').locator('.opt', { hasText: op }).first();
+      const btn = a.getByRole('dialog').getByRole('button', { name: new RegExp(`^${op.replace(/[$]/g, '\\$')}`) }).first();
       if ((await btn.getAttribute('aria-pressed')) !== 'true') await btn.click();
       await a.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
     }
     check(`${label}: the plan card appears with an Accept button`, await wait(a.getByRole('button', { name: 'Accept this plan' }), 20000));
-    check(`${label}: the AI adds a route card for the bus`, await wait(a.getByRole('group', { name: 'Getting to La Jolla Cove' }), 8000));
-    await a.getByRole('group', { name: 'Getting to La Jolla Cove' }).scrollIntoViewIfNeeded().catch(() => {});
+    check(`${label}: the AI adds a route card for the bus`, await wait(a.getByRole('button', { name: /^Route .*On the board/ }), 8000));
+    await a.getByRole('button', { name: /^Route .*On the board/ }).first().click();
+    check(`${label}: the route card is on the board`, await wait(a.getByRole('dialog').getByRole('group', { name: 'Getting to La Jolla Cove' }), 4000));
+    await a.waitForTimeout(800);
     await a.screenshot({ path: `${DIR}/${label}_04_route.png` });
+    await a.getByRole('dialog').getByRole('button', { name: 'Close' }).first().click();
     await a.getByRole('button', { name: 'Accept this plan' }).last().scrollIntoViewIfNeeded();
     await a.screenshot({ path: `${DIR}/${label}_05_plan_card.png` });
     await a.getByRole('button', { name: 'Accept this plan' }).last().click();

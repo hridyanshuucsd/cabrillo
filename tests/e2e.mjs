@@ -120,13 +120,13 @@ try {
   await shot(x, '05_chat_private_headsup');
   // way 1 of 3: the AI passes it on without a name (straight from the heads-up)
   await x.locator('.bubble.private').getByRole('button', { name: /without my name/ }).click();
-  await y.getByText(/Someone at this table asked me to pass this on without their name/).waitFor({ timeout: 5000 });
-  check('the AI can pass a limit on without a name', !(await body(y)).includes(`${xn} asked me`));
+  await y.getByText(/Shared without a name:/).waitFor({ timeout: 5000 });
+  check('the AI can pass a limit on without a name', !(await body(y)).includes(`From ${xn}:`));
   // the plan now takes the option that breaks the shared limit: the AI speaks up. z agrees with one tap on "Me too".
   await z.getByRole('button', { name: `Me too: ${bad}` }).click();
   await x.getByText(`${zn} agreed with ${yn}: ${bad}.`).waitFor({ timeout: 5000 });
   check('"Me too" under a message picks what that message asked for', !(await z.getByRole('button', { name: `Me too: ${bad}` }).count()));
-  await y.getByText(/does not fit a limit that someone shared without their name/).waitFor({ timeout: 5000 });
+  await y.getByText(/does not fit something shared without a name/).waitFor({ timeout: 5000 });
   check('the AI speaks up when the plan stops fitting a shared limit', true);
   // a private question to the AI: only the person who asked sees the question and the answer
   await x.getByRole('button', { name: 'Ask AI' }).click();
@@ -154,7 +154,7 @@ try {
   // way 3 of 3: the AI passes it on with a name
   await z.getByRole('button', { name: 'Your private limit' }).click();
   await z.getByRole('button', { name: /with my name/ }).click();
-  await x.getByText(`${zn} asked me to pass this on`).waitFor({ timeout: 5000 });
+  await x.getByText(`From ${zn}:`).waitFor({ timeout: 5000 });
   check('all three ways to share a limit work', true);
 
   // tapping counts like saying
@@ -224,6 +224,11 @@ try {
   const uText = await body(u);
   check('answer-only AI made no unprompted moves', !/Quick check before|Tap to pick\.|Heads up/.test(uText) && !(await u.getByText('Only you see this').count()) && !(await u.getByRole('button', { name: /^Me too/ }).count()));
   await say(u, '@AI can you book an uber for us?');
+  // the ride card is on the plan board; the chat has one line that opens it
+  const ref = u.getByRole('button', { name: /^Ride .*On the board/ }).first();
+  await ref.waitFor({ timeout: 6000 });
+  check('the chat shows one line for the ride, not the whole card', (await u.locator('.messages').getByRole('group', { name: /^Ride to / }).count()) === 0);
+  for (const p of A) await p.getByRole('button', { name: /^Ride .*On the board/ }).first().click();
   await u.getByRole('group', { name: /^Ride to / }).first().waitFor({ timeout: 6000 });
   check('answer-only AI answers and books only when asked', true);
   // each person tells the AI privately which rides work; here one person says none do
@@ -235,6 +240,7 @@ try {
   check('ride answers are private: others see only how many answered', !(await rideOf(u).getByText(/none of these/i).count()) && (await rideOf(v).getByText(/none of these/i).count()) === 1);
   await rideOf(w).getByRole('checkbox', { name: /^XL/ }).click();
   await rideOf(w).getByRole('button', { name: 'Send my answer' }).click();
+  for (const p of A) await p.getByRole('dialog').getByRole('button', { name: 'Close' }).first().click();
   await u.getByText(/Not booked: no ride works for everyone/).first().waitFor({ timeout: 5000 });
   const An = listenFirst ? ['Jordan', 'Lena', 'Omar'] : ['Maya', 'Dev', 'Priya'];
   const notBooked = await u.getByText(/Not booked: no ride works for everyone/).first().innerText();
