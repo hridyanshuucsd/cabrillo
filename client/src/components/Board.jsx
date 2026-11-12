@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { emit } from '../lib.js';
 import MapView, { gmapsDirections, gmapsPlace } from './MapView.jsx';
 import { MapCard, RideCard, TableCard, BillCard } from './Cards.jsx';
@@ -29,7 +29,7 @@ export function Options({ g, send, id, compact }) {
           <button key={o.id} className={`opt ${mine === o.id ? 'mine' : ''} ${row?.leader === o.id && row.status === 'agreed' ? 'lead' : ''}`} aria-pressed={mine === o.id} disabled={!!g.deal}
             onClick={() => send('game:pick', { field: id, option: mine === o.id ? '' : o.id })}>
             <span className="opt-name">{o.name}</span>
-            {compact ? (names.length > 0 && <span className="opt-n">{names.length}</span>) : names.length > 0 && <span className="opt-who">{names.join(', ')}</span>}
+            {compact ? (names.length > 0 && <span className="opt-n">{names.length}</span>) : names.length > 0 && <span className="opt-who">{names.map((n, i) => <span key={i} className="nw">{n}{i < names.length - 1 ? ', ' : ''}</span>)}</span>}
             {!compact && no.length > 0 && <span className="opt-warn">Does not work for {no.join(', ')}</span>}
             {!compact && o.custom && o.by && <span className="opt-by">added by {o.by}</span>}
             {mine === o.id && !compact && <span className="opt-check" aria-hidden="true">✓</span>}
@@ -67,11 +67,14 @@ export function AvailGrid({ g, send, id }) {
   const a = g.board?.avail?.[id];
   if (!field || !a) return null;
   const best = Math.max(0, ...Object.values(a.score || {}));
+  // Day names are shortened in the column heads so four times fit across a phone; the full name is in the label.
+  const short = (n) => n.replace(/\b(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day\b/g, (_, d) => ({ Tues: 'Tue', Wednes: 'Wed', Thurs: 'Thu', Satur: 'Sat' }[d] || d))
+    .replace(/\bmorning\b/, 'morn.').replace(/\bafternoon\b/, 'aft.').replace(/\bevening\b/, 'eve.');
   return (
     <div className="grid-wrap">
-      <div className="avail" role="table" aria-label={`${field.name}: who can make which option`} style={{ gridTemplateColumns: `minmax(84px, 1.1fr) repeat(${field.options.length}, minmax(64px, 1fr))` }}>
-        <div role="columnheader" className="avail-corner small muted">Tap your row</div>
-        {field.options.map((o) => <div key={o.id} role="columnheader" className={`avail-head ${best > 0 && a.score?.[o.id] === best ? 'best' : ''}`}>{o.name}{best > 0 && a.score?.[o.id] === best && <span className="best-tag">Most can</span>}</div>)}
+      <div className="avail" role="table" aria-label={`${field.name}: who can make which option`} style={{ gridTemplateColumns: `minmax(58px, 1fr) repeat(${field.options.length}, minmax(52px, 1fr))` }}>
+        <div role="columnheader" className="avail-corner tiny muted">Tap your row</div>
+        {field.options.map((o) => <div key={o.id} role="columnheader" aria-label={o.name} className={`avail-head ${best > 0 && a.score?.[o.id] === best ? 'best' : ''}`}><span aria-hidden="true">{short(o.name)}</span>{best > 0 && a.score?.[o.id] === best && <span className="best-tag">Most can</span>}</div>)}
         {a.rows.map((r) => (
           <React.Fragment key={r.pcode}>
             <div role="rowheader" className={`avail-name ${r.you ? 'you' : ''}`}>{r.you ? 'You' : r.name}</div>
@@ -145,6 +148,19 @@ function PlaceWidget({ g, send, id, onMenu }) {
           </div>
         );
       })}
+      {/* options that are not a place on the map, such as "Online on Zoom" */}
+      {g.task.fields.find((f) => f.id === id)?.options.filter((o) => !places.some((x) => x.id === o.id)).map((o) => {
+        const who = row?.options.find((x) => x.option === o.id)?.who || [];
+        const no = row?.blocked?.[o.id] || [];
+        return (
+          <div key={o.id} className={`place-row ${o.id === row?.leader ? 'lead' : ''}`}>
+            <span className="mk place inline off" aria-hidden="true">·</span>
+            <span className="grow"><strong>{o.name}</strong><br /><span className="small muted">Not on the map{who.length ? ` · ${who.join(', ')}` : ''}</span>
+              {no.length > 0 && <><br /><span className="opt-warn">Does not work for {no.join(', ')}</span></>}</span>
+            {!g.deal && <button className={`opt place-pick ${mine === o.id ? 'mine' : ''}`} aria-pressed={mine === o.id} aria-label={o.name} onClick={() => send('game:pick', { field: id, option: mine === o.id ? '' : o.id })}>{mine === o.id ? 'Picked' : 'Pick'}</button>}
+          </div>
+        );
+      })}
       <AddPlace g={g} field={id} />
     </div>
   );
@@ -160,7 +176,7 @@ export function PartWidget({ g, send, id, onMenu }) {
       {f.kind === 'time' && <AvailGrid g={g} send={send} id={id} />}
       {f.kind === 'place' ? <PlaceWidget g={g} send={send} id={id} onMenu={onMenu || (() => {})} /> : <Options g={g} send={send} id={id} />}
       {row?.own?.length > 0 && <div className="small muted">Going their own way: {row.own.map((x) => `${x.name} (${x.optionName})`).join(', ')}</div>}
-      {f.kind !== 'place' && <AddOption g={g} field={id} placeholder={f.kind === 'time' ? 'Add a time, like Thursday 7 pm' : `Add your own ${f.name.toLowerCase()} option`} />}
+      {f.kind !== 'place' && <AddOption g={g} field={id} placeholder={f.kind === 'time' ? 'Add a time' : 'Add another option'} />}
     </div>
   );
 }
@@ -170,7 +186,7 @@ function MenuCard({ g, send, id, m }) {
   const total = (items) => items.reduce((a, x) => a + x.price * x.qty, 0);
   const mineTotal = Object.entries(m.mine || {}).reduce((a, [i, q]) => a + (m.items.find((x) => x.id === i)?.price || 0) * q, 0);
   return (
-    <div className="card-ai menu" id={`menu-${id}`} role="group" aria-label={`Menu: ${m.place.name}`}>
+    <div className="card-ai menu" id={`menu-${id}`} data-nav="Menu" role="group" aria-label={`Menu: ${m.place.name}`}>
       <div className="card-ai-body">
         <div className="row between"><strong className="ride-title">{m.place.name}</strong><span className="chip">{m.loading ? 'Finding the menu' : m.sample ? 'Sample menu' : 'Menu from the web'}</span></div>
         {m.loading && <div className="row" style={{ gap: 8 }}><div className="spinner small" aria-hidden="true" /><span className="small muted">Looking it up...</span></div>}
@@ -255,8 +271,27 @@ export function CalendarLinks({ g, plan }) {
 }
 
 // ---------- the whole board ----------
+// A row of short links at the top of the board, one for each card on it, so a long board is quick to move around
+// in on a small screen. It stays at the top while the board scrolls.
+function BoardNav({ root }) {
+  const [items, setItems] = useState([]);
+  const key = useRef('');
+  useLayoutEffect(() => {
+    const list = [...(root.current?.querySelectorAll('[data-nav]') || [])].map((e) => ({ id: e.id, label: e.dataset.nav }));
+    const k = JSON.stringify(list);
+    if (k !== key.current) { key.current = k; setItems(list); }
+  });
+  if (items.length < 3) return null;
+  return (
+    <nav className="board-nav" aria-label="Jump to a part of the board">
+      {items.map((x) => <button key={x.id} onClick={() => document.getElementById(x.id)?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>{x.label}</button>)}
+    </nav>
+  );
+}
+
 export default function PlanBoard({ g, send, onAccept, onClose }) {
   const [showHistory, setShowHistory] = useState(false);
+  const rootRef = useRef(null);
   const listen = g.mode === 'listen';
   const paused = !!g.pausedBy;
   const b = g.board || {};
@@ -269,7 +304,7 @@ export default function PlanBoard({ g, send, onAccept, onClose }) {
   const set = g.panel.filter((f) => f.status === 'agreed').length;
   const humans = g.players.filter((p) => !p.isAI);
   return (
-    <div className="pboard">
+    <div className="pboard" ref={rootRef}>
       <div className="pboard-head">
         <div className="grow"><strong>Plan board</strong><div className="small muted">{set} of {g.panel.length} parts set · everyone can edit</div></div>
         <button className="linkbtn small" aria-expanded={showHistory} onClick={() => setShowHistory(!showHistory)}>{b.changes || 0} changes</button>
@@ -289,9 +324,10 @@ export default function PlanBoard({ g, send, onAccept, onClose }) {
           <CalendarLinks g={g} plan={g.plan} />
         </section>
       )}
+      <BoardNav root={rootRef} />
       <Ticket g={g} />
-      {g.panel.map((f) => (
-        <section key={f.id} className={`pcard ${f.status}`} id={`part-${f.id}`}>
+      {g.panel.map((f, i) => (
+        <section key={f.id} className={`pcard ${f.status}`} id={`part-${f.id}`} data-nav={i === 0 ? 'Plan' : undefined}>
           <div className="row between"><strong>{f.name}</strong><span className={`chip ${f.status === 'agreed' ? 'ok' : f.status === 'split' ? 'warn' : ''}`}>{f.status === 'agreed' ? f.leaderName : STATUS[f.status]}</span></div>
           <PartWidget g={g} send={send} id={f.id} onMenu={openMenu} />
         </section>
@@ -317,15 +353,15 @@ export default function PlanBoard({ g, send, onAccept, onClose }) {
       <Invite x={x} act={act} deal={!!g.deal} />
       <Reminders g={g} x={x} act={act} />
       {Object.entries(b.menus || {}).map(([id, m]) => <MenuCard key={id} g={g} send={send} id={id} m={m} />)}
-      {cards.length > 0 && <div className="label" style={{ marginTop: 6 }}>Cards</div>}
+      {cards.length > 0 && <div className="label" id="part-cards" data-nav="Cards" style={{ marginTop: 6 }}>Cards</div>}
       {cards.map((m) => {
         if (m.kind === 'booking') { const bk = (g.bookings || []).find((x) => x.id === m.bookingId); return bk?.kind === 'ride' ? <RideCard key={m.id} b={bk} send={send} offset={g.clockOffset} /> : <TableCard key={m.id} b={bk} send={send} />; }
         if (m.kind === 'bill') return <BillCard key={m.id} b={(g.bills || []).find((x) => x.id === m.billId)} text={m.text} send={send} deal={!!g.deal} />;
         return <MapCard key={m.id} m={(g.maps || []).find((x) => x.id === m.mapId)} />;
       })}
-      {blocks.length > 0 && <div className="label" style={{ marginTop: 6 }}>From the AI</div>}
+      {blocks.length > 0 && <div className="label" id="part-fromai" data-nav="From the AI" style={{ marginTop: 6 }}>From the AI</div>}
       {blocks.slice(0, 6).map((m) => <div key={m.id} className="pcard"><div className="small muted">{m.text}</div>{m.blocks?.map((bl, k) => <MiniBlock key={k} b={bl} />)}</div>)}
-      <section className="pcard" id="part-tasks">
+      <section className="pcard" id="part-tasks" data-nav="To-do">
         <strong>To-do</strong>
         <Todos g={g} send={send} />
       </section>

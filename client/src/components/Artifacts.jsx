@@ -32,8 +32,8 @@ export function OpeningHours({ g }) {
   const wd = b.when ? b.when.weekday : new Date().getDay();
   const at = b.when?.minutes ?? null;
   return (
-    <section className="pcard" id="part-hours">
-      <div className="row between"><strong>Open at that time?</strong><span className="small muted">{b.when ? b.when.label : `${DAY[wd]}, no time picked yet`}</span></div>
+    <section className="pcard" id="part-hours" data-nav="Hours">
+      <div className="row between"><strong>Open at that time?</strong><span className="small muted">{b.when ? b.when.label : `Today, ${DAY[wd]}`}</span></div>
       {places.map((p) => {
         const h = b.hours[p.id];
         const range = h.always ? null : h.week?.[wd] || null;
@@ -71,7 +71,7 @@ export function Itinerary({ g, send }) {
   if (!it) return null;
   const busy = !!g.deal;
   return (
-    <section className="pcard" id="part-day">
+    <section className="pcard" id="part-day" data-nav="The day">
       <div className="row between">
         <span className="grow"><strong>The day</strong><div className="small muted">{it.stops[0].label} to {it.endLabel}{it.edited ? ' · edited by the group' : ' · from the plan'}</div></span>
         {!busy && <span className="seg" role="group" aria-label="Move the whole day">
@@ -139,16 +139,17 @@ export function Weather({ g, send }) {
     if (!b.placeName) return null;
     return <div className="row"><button className="linkbtn small" onClick={() => send('game:weather', {})}>Show the weather for this plan</button></div>;
   }
-  if (!w || w.waiting) return (
-    <section className="pcard" id="part-weather"><strong>Weather</strong>
+  if (!w) return null; // this plan has no place or no day, so there is no forecast to show
+  if (w.waiting) return (
+    <section className="pcard" id="part-weather" data-nav="Weather"><strong>Weather</strong>
       <div className="small muted">{w?.needs === 'far' ? 'The forecast reaches about two weeks ahead.' : w?.needs === 'day' ? 'Pick a day and the forecast shows up here.' : 'Pick a place and a day and the forecast shows up here.'}</div></section>
   );
-  if (w.loading) return <section className="pcard" id="part-weather"><strong>Weather</strong><div className="row" style={{ gap: 8 }}><div className="spinner small" aria-hidden="true" /><span className="small muted">Getting the forecast for {w.place}...</span></div></section>;
-  if (w.temp === null) return <section className="pcard" id="part-weather"><strong>Weather</strong><div className="small muted">The forecast is not available right now.</div></section>;
+  if (w.loading) return <section className="pcard" id="part-weather" data-nav="Weather"><strong>Weather</strong><div className="row" style={{ gap: 8 }}><div className="spinner small" aria-hidden="true" /><span className="small muted">Getting the forecast for {w.place}...</span></div></section>;
+  if (w.temp === null) return <section className="pcard" id="part-weather" data-nav="Weather"><strong>Weather</strong><div className="small muted">The forecast is not available right now.</div></section>;
   const night = w.hour >= 18 || w.hour < 6;
   const max = Math.max(...w.hours.map((x) => x.rain), 30);
   return (
-    <section className={`sky sky-${w.sky} ${night ? 'night' : ''}`} id="part-weather" aria-label={`Weather for ${w.place}, ${w.dayName} at ${w.hourLabel}: ${w.temp} degrees, ${SKY_WORD[w.sky]}, ${w.rain}% chance of rain`}>
+    <section className={`sky sky-${w.sky} ${night ? 'night' : ''}`} id="part-weather" data-nav="Weather" aria-label={`Weather for ${w.place}, ${w.dayName} at ${w.hourLabel}: ${w.temp} degrees, ${SKY_WORD[w.sky]}, ${w.rain}% chance of rain`}>
       <div className="sky-top">
         <div className="grow">
           <div className="sky-where">{w.place}</div>
@@ -181,7 +182,7 @@ export function Bring({ g, send }) {
   const cats = [...new Set(list.map((x) => x.cat))];
   const covered = list.filter((x) => x.owner).length;
   return (
-    <section className="pcard" id="part-bring">
+    <section className="pcard" id="part-bring" data-nav="Bring">
       <div className="row between"><strong>Who brings what</strong><span className="small muted">{covered} of {list.length} covered</span></div>
       {list.length > 0 && <div className="cover" aria-hidden="true">{list.map((x) => <span key={x.id} style={x.owner ? { background: seatColor(x.seat) } : undefined} />)}</div>}
       {cats.map((c) => (
@@ -217,7 +218,7 @@ export function Agreements({ g, send }) {
   const people = g.board?.people || 0;
   const [text, setText] = useState('');
   return (
-    <section className="pcard" id="part-agreements">
+    <section className="pcard" id="part-agreements" data-nav={g.task.id === 'roommates' ? 'Rules' : 'Agreements'}>
       <div className="row between"><strong>{g.task.id === 'roommates' ? 'House rules' : 'Agreements'}</strong>{list.length > 0 && <span className="small muted">{list.filter((x) => x.stamps.length >= people).length} of {list.length} signed by all</span>}</div>
       {list.length === 0 && <div className="small muted">{g.task.id === 'roommates' ? 'Each part of the plan the group agrees on becomes a house rule here for everyone to sign. You can add your own rules too.' : 'Write down what the group promised each other, like "we split gas evenly" or "whoever books gets paid back tonight". Everyone stamps it.'}</div>}
       {list.map((x) => {
@@ -303,7 +304,7 @@ export function Ticket({ g }) {
   const copy = async () => { try { await navigator.clipboard.writeText(text); flash('Copied the plan'); } catch { flash('Could not copy here'); } };
   const save = () => { const c = drawTicket(t); const a = document.createElement('a'); a.download = 'plan.png'; a.href = c.toDataURL('image/png'); a.click(); flash('Saved plan.png'); };
   return (
-    <section className="ticket-wrap" id="part-ticket">
+    <section className="ticket-wrap" id="part-ticket" data-nav="Share">
       <div className={`ticket ${t.complete ? '' : 'draft'}`} role="group" aria-label={`The plan as a ticket: ${text.replace(/\n/g, '. ')}`}>
         <div className="ticket-main">
           <div className="ticket-title">{t.title}{!t.complete && <span className="ticket-draft">Draft</span>}</div>

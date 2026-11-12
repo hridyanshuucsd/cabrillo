@@ -3,7 +3,7 @@ import { taskById, fieldName, optionName, planComplete } from './tasks.js';
 import { applyMessage, buildPanel, findConflict, topicOf, topicIn, isQuestion, statesWish, detectOptions, sameMessage } from './listener.js';
 import { q, logEvent } from './db.js';
 import { answerQuestion, summarize, aiMode, playerLine, wantsCompare, menuFor, hoursFor } from './ai.js';
-import { planWhen, clock, openAt, forecast, sky, buildItinerary, BRING, OUTDOOR } from './artifacts.js';
+import { planWhen, clock, openAt, forecast, sky, buildItinerary, BRING, OUTDOOR, NO_TRIP } from './artifacts.js';
 import { costFor, seatsFromFact, carpoolPicked, CHORES, sectionsFor, projectDates, HACK_MILESTONES, TICKETS, ROOMS, roomSlots, LISTINGS, perPerson, TRUCKS, PER_MILE, truckQuote,
   GIFTS, ROSTER, OPPONENTS, SIZES, AGENDA, STUDY_TOPICS, SHIFTS, SHIFT_START, INVITE_TASKS, inviteText } from './extras.js';
 import { FACTS, ROLE, BILLS, firstPerson } from './facts.js';
@@ -1910,6 +1910,7 @@ export class Table {
   }
   // Keeps the itinerary, hours and weather in step with the plan. Lookups run in the background and broadcast.
   refreshArtifacts() {
+    if (NO_TRIP.has(this.task.id)) { this.refreshExtras(); return; }
     const { h, place, when, travel } = this.aim();
     if (place && !this.itin?.edited) {
       const routeCard = this.maps.filter((m) => m.kind === 'route' && m.place?.id === place.id && m.mode === (h.travel === 'transit' ? 'transit' : 'driving')).at(-1);
@@ -2038,7 +2039,7 @@ export class Table {
     const hours = {};
     for (const pl of placesOf(this.task)) {
       const h = this.hours[pl.id];
-      if (!h) continue;
+      if (!h || (!h.loading && !h.hours)) continue;
       const st = when ? openAt(h.hours, when.weekday, when.minutes) : { open: null };
       hours[pl.id] = { loading: !!h.loading, kind: h.hours?.kind || null, source: h.hours?.source || null, always: !!h.hours?.always,
         today: st.today || null, open: st.open, week: h.hours?.always ? null : h.hours?.days || null, links: h.links || [] };
@@ -2059,10 +2060,10 @@ export class Table {
         sky: now ? sky(now.code) : null, temp: now?.temp ?? null, rain: now?.rain ?? null, source: w.data?.source || null,
         hi: hrs.length ? Math.max(...hrs.map((x) => x.temp)) : null, lo: hrs.length ? Math.min(...hrs.map((x) => x.temp)) : null,
         hours: hrs.filter((x) => x.h >= Math.max(6, at - 4) && x.h <= Math.min(23, at + 5)).map((x) => ({ ...x, sky: sky(x.code), label: clock(x.h * 60) })) };
-    } else if (this.weatherOn) weather = { waiting: true, needs: !place ? 'place' : !when ? 'day' : when.daysAway > 15 ? 'far' : 'place' };
+    } else if (this.weatherOn && placeField(this.task) && !NO_TRIP.has(this.task.id) && !(!when && !this.task.fields.some((f) => fieldKind(this.task, f) === 'time'))) weather = { waiting: true, needs: !place ? 'place' : !when ? 'day' : when.daysAway > 15 ? 'far' : 'place' };
     return {
       when: when ? { ...when, label: `${when.dayName}${when.minutes !== null ? ` at ${clock(when.minutes)}` : ''}`, dateLabel: when.date } : null,
-      placeName: place?.name || null, placeId: place?.id || null, hours, itin, weather, weatherOn: this.weatherOn,
+      placeName: NO_TRIP.has(this.task.id) ? null : place?.name || null, placeId: place?.id || null, hours, itin, weather, weatherOn: this.weatherOn,
       agreements: this.agreements.map((x) => ({ id: x.id, text: x.text, byName: name(x.by), byAI: x.by === 'AI', fromPlan: !!x.field, stamps: x.stamps.map((c) => ({ name: name(c), seat: seat(c), you: me && c === me.pcode })), mine: !!me && x.stamps.includes(me.pcode) })),
       people: this.humans().length,
       bring: this.bring.map((x) => ({ id: x.id, cat: x.cat, name: x.name, owner: x.owner ? name(x.owner) : null, seat: x.owner ? seat(x.owner) : null, mine: !!me && x.owner === me.pcode, byAI: x.by === 'AI' }))

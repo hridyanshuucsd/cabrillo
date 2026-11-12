@@ -12,8 +12,10 @@ const grey = '#7a8790';
 const clock = (min) => { const h = Math.floor(min / 60) % 24, m = min % 60; return `${((h + 11) % 12) + 1}${m ? `:${String(m).padStart(2, '0')}` : ''} ${h >= 12 ? 'pm' : 'am'}`; };
 const Dot = ({ p, size = 24 }) => <span className="xdot" style={{ width: size, height: size, background: p?.color || grey, fontSize: size * 0.5 }} title={p ? (p.you ? 'You' : p.name) : ''} aria-hidden="true">{ini(p?.name)}</span>;
 const Who = ({ p }) => <span className="xwho"><Dot p={p} size={20} />{p.you ? 'You' : p.name}</span>;
+const NAV = { 'part-x-cost': 'Cost', 'part-x-cars': 'Seats', 'part-x-chores': 'Chores', 'part-x-work': 'Work', 'part-x-agenda': 'Agenda', 'part-x-study': 'Study', 'part-x-shifts': 'Shifts', 'part-x-roster': 'Roster',
+  'part-x-listings': 'Apartments', 'part-x-truck': 'Truck', 'part-x-tickets': 'Tickets', 'part-x-room': 'Room', 'part-x-gifts': 'Gift pool', 'part-x-invite': 'Invite', 'part-x-reminders': 'Reminders' };
 const Section = ({ id, title, aside, children, className = '' }) => (
-  <section className={`pcard ${className}`} id={id}>
+  <section className={`pcard ${className}`} id={id} data-nav={NAV[id]}>
     <div className="row between"><strong>{title}</strong>{aside && <span className="small muted">{aside}</span>}</div>
     {children}
   </section>
@@ -38,7 +40,7 @@ export function Cost({ x }) {
   const max = Math.max(c.total * 1.25, b ? (b.hi ?? b.lo * 1.6) * 1.25 : 0, 10);
   const pct = (v) => `${Math.min(100, (v / max) * 100)}%`;
   return (
-    <section className="pcard receipt-wrap" id="part-x-cost">
+    <section className="pcard receipt-wrap" id="part-x-cost" data-nav="Cost">
       <div className="receipt" role="group" aria-label={`Cost per person: about ${money(c.total)}${c.monthly ? ' a month' : ''}`}>
         <div className="receipt-head"><strong>What it costs each person</strong><span className="tiny muted">{c.people} people · this game's prices</span></div>
         {c.items.map((it, i) => <div key={i} className={`rline ${it.optional ? 'optional' : ''}`}><span>{it.label}{it.optional ? ' (optional)' : ''}</span><span className="leader" aria-hidden="true" /><span>{money(it.amount)}</span></div>)}
@@ -85,7 +87,7 @@ export function Cars({ x, act, deal }) {
   const driving = c.list.find((k) => k.mine);
   const riding = c.list.find((k) => k.inIt);
   return (
-    <Section id="part-x-cars" title="Carpool seats" aside={`${c.list.reduce((a, k) => a + k.seats - k.riders.length, 0)} free seats in ${c.list.length} car${c.list.length === 1 ? '' : 's'}`}>
+    <Section id="part-x-cars" title="Carpool seats" aside={`${c.list.reduce((a, k) => a + k.seats - k.riders.length, 0)} free seat${c.list.reduce((a, k) => a + k.seats - k.riders.length, 0) === 1 ? '' : 's'} in ${c.list.length} car${c.list.length === 1 ? '' : 's'}`}>
       {c.list.length === 0 && <div className="small muted">Nobody has offered to drive yet.</div>}
       {c.list.map((k) => (
         <div key={k.id} className="car-row">
@@ -110,6 +112,7 @@ export function Cars({ x, act, deal }) {
 // ---------- chore chart ----------
 export function Chores({ x, act, deal }) {
   const [sel, setSel] = useState(null);
+  const [wk, setWk] = useState(0); // on a phone the chart shows one week at a time
   if (x.cleanNote && !x.chores) return <Section id="part-x-chores" title="Chores"><div className="small muted">{x.cleanNote}</div></Section>;
   const c = x.chores;
   if (!c) return null;
@@ -135,6 +138,16 @@ export function Chores({ x, act, deal }) {
           </div>
         ))}
       </div>
+      <div className="chore-week">
+        <span className="seg" role="group" aria-label="Which week">{c.weeks.map((_, w) => <button key={w} aria-pressed={wk === w} className={wk === w ? 'on' : ''} onClick={() => { setWk(w); setSel(null); }}>{w === 0 ? 'This week' : `Week ${w + 1}`}</button>)}</span>
+        {c.chores.map((name, i) => {
+          const p = c.weeks[wk][i];
+          const picked = sel && sel.w === wk && sel.i === i;
+          const target = sel && sel.w === wk && sel.i !== i;
+          return <button key={name} className={`chore-cell wide ${picked ? 'picked' : ''} ${target ? 'target' : ''}`} style={{ '--seat': p.color || grey }} onClick={() => tap(wk, i)}
+            aria-label={`${name}, ${wk === 0 ? 'this week' : `week ${wk + 1}`}: ${p.you ? 'you' : p.name}${target ? '. Tap to trade' : ''}`}><span className="grow chore-name">{name}</span><Dot p={p} size={22} /><span className="chore-who">{p.you ? 'You' : p.name}</span></button>;
+        })}
+      </div>
       <div className="tiny muted">{sel ? 'Now tap the chore you want to trade for, in the same week.' : 'To trade, tap one of your chores, then the one you want that week.'}</div>
     </Section>
   );
@@ -147,7 +160,7 @@ function ClaimRows({ items, list, act, deal, status, cap }) {
     <div key={it.id} className={`claim-row ${it.status}`}>
       <span className="grow"><span className="claim-title">{it.title}</span>
         <span className="claim-takers">{it.takers.length ? it.takers.map((p, i) => <Who key={i} p={p} />) : <span className="tiny muted">Nobody yet</span>}</span></span>
-      {status && <button className={`status-pill ${it.status}`} disabled={deal} onClick={() => act('list', 'status', { list, id: it.id })} aria-label={`${it.title}: ${STATUS[it.status]}. Tap to change`}>{STATUS[it.status]}</button>}
+      {status && <button className={`wstatus ${it.status}`} disabled={deal} onClick={() => act('list', 'status', { list, id: it.id })} aria-label={`${it.title}: ${STATUS[it.status]}. Tap to change`}>{STATUS[it.status]}</button>}
       {!deal && (it.mine || it.takers.length < (it.cap || cap)) && <button className={`btn small ${it.mine ? 'ghost' : ''}`} onClick={() => act('list', 'take', { list, id: it.id })}>{it.mine ? 'Let go' : 'I will do it'}</button>}
     </div>
   ));
@@ -356,17 +369,17 @@ export function Roster({ x, act, deal }) {
   if (!r.sport) return <Section id="part-x-roster" title="Team roster"><div className="small muted">Pick a sport and the positions show up here.</div></Section>;
   return (
     <Section id="part-x-roster" title={`${r.sportName} roster`} aside={r.captain ? `Captain: ${r.captain.you ? 'you' : r.captain.name}` : 'No captain yet'}>
-      <svg viewBox="0 0 100 60" className="field" role="group" aria-label={`${r.sportName} positions`}>
-        <Field surface={r.surface} />
+      {/* the court is drawn; the spots are ordinary buttons on top of it, so they stay a good size on any screen */}
+      <div className="field-wrap" role="group" aria-label={`${r.sportName} positions`}>
+        <svg viewBox="0 0 100 60" className="field" aria-hidden="true"><Field surface={r.surface} /></svg>
         {r.spots.map((s) => (
-          <g key={s.id} className={`spot ${s.who ? 'taken' : ''} ${s.who?.you ? 'mine' : ''}`} role="button" tabIndex={deal ? -1 : 0} aria-label={`${s.label}: ${s.who ? (s.who.you ? 'you' : s.who.name) : 'open. Tap to play here'}`}
-            onClick={() => !deal && (!s.who || s.who.you) && act('roster', 'spot', { id: s.id })} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && !deal && (!s.who || s.who.you) && act('roster', 'spot', { id: s.id })}>
-            <circle cx={s.x} cy={s.y} r="5.2" fill={s.who ? s.who.color || grey : 'rgba(255,255,255,.85)'} />
-            <text x={s.x} y={s.y + 1.9} className="spot-ini">{s.who ? ini(s.who.name) : '+'}</text>
-            <text x={s.x} y={s.y + 10.5} className="spot-label">{s.label}</text>
-          </g>
+          <button key={s.id} className={`spot ${s.who ? 'taken' : ''} ${s.who?.you ? 'mine' : ''} ${s.x < 15 ? 'edge-l' : s.x > 85 ? 'edge-r' : ''}`} style={{ left: `${s.x}%`, top: `${(s.y / 60) * 100}%` }}
+            disabled={deal || (s.who && !s.who.you)} aria-label={`${s.label}: ${s.who ? (s.who.you ? 'you' : s.who.name) : 'open. Tap to play here'}`} onClick={() => act('roster', 'spot', { id: s.id })}>
+            <span className="spot-dot" style={s.who ? { background: s.who.color || grey } : undefined}>{s.who ? ini(s.who.name) : '+'}</span>
+            <span className="spot-label">{s.label}</span>
+          </button>
         ))}
-      </svg>
+      </div>
       <div className="tiny muted">Tap an open spot to play there. Spots nobody takes go to friends you bring along.</div>
       <div className="roster-people">
         {r.players.map((p) => (

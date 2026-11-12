@@ -91,7 +91,7 @@ export default function Host() {
           <Link className="btn" to={`/analytics/${code}`}>Open analytics</Link>
         </div>
         <div className="label">Download data (CSV)</div>
-        <div className="row wrap-row" style={{ gap: 14 }}>{['tables.csv', 'participants.csv', 'logs.csv', 'feedback.csv', 'sessions.csv', 'players.csv'].map((f) => <a key={f} href={exp(f)}>{f}</a>)}</div>
+        <div className="row wrap-row export-links" style={{ gap: 14 }}>{['tables.csv', 'participants.csv', 'logs.csv', 'feedback.csv', 'sessions.csv', 'players.csv'].map((f) => <a key={f} href={exp(f)}>{f}</a>)}</div>
         <p className="small muted" style={{ margin: 0 }}>Codes only, no names or emails.</p>
       </section>
       {present && (

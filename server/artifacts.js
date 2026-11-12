@@ -118,15 +118,21 @@ export function sky(code) {
 // ---------- itinerary ----------
 // Built from the plan: meet on campus, travel there, the main thing, and the way back. Each stop has a length in
 // minutes; times follow from the start, so moving the start moves the whole day.
+// When the plan names no time: the usual start for that kind of plan.
+const DEFAULT_START = { concert: 19 * 60 + 30, dinner: 19 * 60, gaming: 19 * 60, study: 18 * 60, event: 19 * 60, potluck: 17 * 60, birthday: 19 * 60, anniversary: 18 * 60, volunteer: 10 * 60, cleanup: 9 * 60 };
+// Plans whose "place" is an area to live in, not somewhere the group goes together: no day, hours or weather.
+export const NO_TRIP = new Set(['housing']);
 const MAIN = { dinner: 90, anniversary: 120, outing: 150, trip: 360, cleanup: 120, concert: 180, volunteer: 180, birthday: 150, potluck: 180, gaming: 180, event: 150, study: 120, moving: 240, hackathon: 24 * 60, sports: 60, meeting: 45, project: 90, housing: 60, roommates: 60, beachhouse: 120 };
 // legMinutes: the travel time from the route card when there is one, so the chat and the board say the same number.
 export function buildItinerary(task, plan, place, travelName, when, legMinutes) {
   const travel = String(travelName || '').toLowerCase();
-  const leg = place ? estimate(PICKUP, place).minutes : 15;
-  const mins = legMinutes || (/bus|trolley|transit|train|amtrak/.test(travel) ? Math.round(leg * 2.2 + 8) : leg);
-  const how = /bus|trolley|transit/.test(travel) ? 'transit' : /train|amtrak/.test(travel) ? 'train' : /walk/.test(travel) ? 'walk' : travel ? 'car' : 'car';
-  const main = MAIN[task.id] || 120;
-  const startMain = when?.minutes ?? 14 * 60;
+  const e = place ? estimate(PICKUP, place) : { minutes: 15, miles: 5 };
+  const near = place && e.miles <= 1.5; // on or next to campus: everyone walks
+  const leg = e.minutes;
+  const mins = near ? Math.max(5, Math.round(e.miles * 20)) : legMinutes || (/bus|trolley|transit|train|amtrak/.test(travel) ? Math.round(leg * 2.2 + 8) : leg);
+  const how = near ? 'walk' : /bus|trolley|transit/.test(travel) ? 'transit' : /train|amtrak/.test(travel) ? 'train' : /walk/.test(travel) ? 'walk' : 'car';
+  const main = (task.id === 'study' && { h1: 60, h2: 120, h3: 180 }[plan.length]) || MAIN[task.id] || 120;
+  const startMain = when?.minutes ?? DEFAULT_START[task.id] ?? 14 * 60;
   const where = place?.name || 'the place';
   const stops = [
     // the meeting time is a round number (on the 5 minutes); the extra minutes are spent waiting at Price Center

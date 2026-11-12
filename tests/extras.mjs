@@ -90,8 +90,8 @@ try {
   t = await table('project');
   await t.pick('split', 'By role (research, writing, editing, slides)'); await t.pick('draft', 'Wednesday');
   await t.B.locator('#part-x-work .claim-row', { hasText: 'Writing' }).getByRole('button', { name: 'I will do it' }).click();
-  await t.B.locator('#part-x-work .claim-row', { hasText: 'Writing' }).locator('.status-pill').click();
-  check('project: Maya writes, in progress, with draft and final on a timeline', await wait(t.B.locator('#part-x-work .status-pill.doing')) && (await t.B.locator('#part-x-work .dl-mark').count()) === 3);
+  await t.B.locator('#part-x-work .claim-row', { hasText: 'Writing' }).locator('.wstatus').click();
+  check('project: Maya writes, in progress, with draft and final on a timeline', await wait(t.B.locator('#part-x-work .wstatus.doing')) && (await t.B.locator('#part-x-work .dl-mark').count()) === 3);
   await t.shot('#part-x-work', 'project_work'); await t.close();
 
   // concert: tickets answered privately, then bought

@@ -66,6 +66,22 @@ try {
   check('laptop: the cove is open all day', /Open then/.test(await A.locator('#part-hours').innerText()));
   check('laptop: the plan ticket shows Sunday', await wait(A.locator('.ticket-day', { hasText: 'Sun' })));
 
+  // On a phone with the board closed, a change someone else makes shows for a moment above the message box.
+  await A.getByRole('button', { name: /^Snacks: nobody yet/ }).click();
+  const toast = c.locator('.board-toast');
+  check('phone: Priya sees "Maya will bring snacks" without opening the board', await wait(toast) && /Maya will bring snacks/.test(await toast.innerText()));
+  await toast.click();
+  const Cs = c.getByRole('dialog', { name: 'The plan so far' });
+  check('phone: tapping it opens the board', await wait(Cs));
+  await Cs.locator('.board-nav').getByRole('button', { name: 'Bring', exact: true }).click();
+  await c.waitForTimeout(1500);
+  const room = await Cs.locator('.sheet-body').evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
+  const top = await Cs.locator('#part-bring').evaluate((el) => el.getBoundingClientRect().top);
+  const navBottom = await Cs.locator('.board-nav').evaluate((el) => el.getBoundingClientRect().bottom);
+  check('phone: the jump row takes her to who brings what, not hidden under the row', top >= navBottom - 2 && (top < navBottom + 80 || room < 2), `${top} ${navBottom} ${room}`);
+  await c.screenshot({ path: `${DIR}/phone_jump_row.png` });
+  await shut(c);
+
   // Who brings what: Dev claims water on a phone, Maya sees his name on it.
   let B = await board(b);
   await B.getByRole('button', { name: /^Water: nobody yet/ }).click();

@@ -35,19 +35,24 @@ function usePhoneViewport(active) {
     if (!active) return;
     const vv = window.visualViewport;
     const root = document.documentElement;
-    let full = window.innerHeight;
+    let full = window.innerHeight, width = window.innerWidth;
     const set = () => {
       const h = vv ? vv.height : window.innerHeight;
+      // turning the phone changes the width: start over, so a short landscape screen is not taken for a keyboard
+      if (window.innerWidth !== width) { width = window.innerWidth; full = window.innerHeight; }
       full = Math.max(full, window.innerHeight);
       root.style.setProperty('--vv-h', `${h}px`);
       root.style.setProperty('--vv-top', `${vv ? vv.offsetTop : 0}px`);
-      setKeyboard(h < full - 120);
+      const typing = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName);
+      setKeyboard(typing && h < full - 120);
     };
+    document.addEventListener('focusin', set); document.addEventListener('focusout', set);
     set();
     root.classList.add('app-locked');
     vv?.addEventListener('resize', set); vv?.addEventListener('scroll', set); window.addEventListener('resize', set);
     return () => {
       vv?.removeEventListener('resize', set); vv?.removeEventListener('scroll', set); window.removeEventListener('resize', set);
+      document.removeEventListener('focusin', set); document.removeEventListener('focusout', set);
       root.classList.remove('app-locked');
     };
   }, [active]);
@@ -254,6 +259,19 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
   const [ask, setAsk] = useState('off');    // 'off' | 'group' (everyone sees the question) | 'private' (only you do)
   const wide = useWide();
   const close = () => setSheet(null);
+  // On a phone the board is out of sight, so a change someone else makes shows for a few seconds above the message box.
+  const [toast, setToast] = useState(null);
+  const seen = useRef(g.board?.changes || 0);
+  useEffect(() => {
+    const n = g.board?.changes || 0;
+    if (n <= seen.current) { seen.current = n; return undefined; }
+    seen.current = n;
+    const last = g.board?.history?.at(-1)?.text;
+    if (wide || sheet || !last || last.startsWith(`${g.me.name} `)) return undefined;
+    setToast(last);
+    const id = setTimeout(() => setToast(null), 4500);
+    return () => clearTimeout(id);
+  }, [g.board?.changes]);
   const sayMyself = () => { setAsk('off'); setDraft({ text: g.me.limit.say, n: Date.now() }); close(); };
   const share = (mode) => { send('game:share', { mode }); close(); };
   const humans = g.players.filter((p) => !p.isAI);
@@ -284,8 +302,11 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
         {!keyboard && <Board g={g} open={setSheet} openBoard={openBoard} wide={wide} />}
         <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} followUp={() => setAsk('private')} openField={(id) => setSheet({ type: 'field', id })} openBoard={openBoard} onAccept={onAccept} />
         {!keyboard && <Waiting g={g} openBoard={openBoard} />}
-        {!keyboard && <BottomBar g={g} send={send} open={setSheet} humans={humans} />}
-        <Composer g={g} send={send} draft={draft} ask={ask} setAsk={setAsk} />
+        <div className="dock">
+          {toast && !wide && !sheet && <button className="board-toast" onClick={() => { setToast(null); openBoard(); }}><span className="grow">{toast}</span><span className="bt-open">Board</span></button>}
+          {!keyboard && <BottomBar g={g} send={send} open={setSheet} humans={humans} />}
+          <Composer g={g} send={send} draft={draft} ask={ask} setAsk={setAsk} />
+        </div>
       </div>
       {wide && <aside className="board-col" aria-label="Plan board"><PlanBoard g={g} send={send} onAccept={onAccept} /></aside>}
 

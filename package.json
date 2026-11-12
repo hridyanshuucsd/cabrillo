@@ -13,7 +13,7 @@
     "start": "node server/index.js",
     "test:e2e": "node tests/e2e.mjs",
     "test": "node tests/unit.mjs && node tests/scenarios.mjs && node tests/conversation.mjs",
-    "test:all": "npm run build && node tests/unit.mjs && node tests/scenarios.mjs && node tests/conversation.mjs && node tests/e2e.mjs && node tests/mobile.mjs && node tests/cards.mjs && node tests/artifacts.mjs && node tests/extras.mjs && node tests/aiplayers.mjs && node tests/analytics.mjs && node tests/load.mjs 75"
+    "test:all": "npm run build && node tests/unit.mjs && node tests/scenarios.mjs && node tests/conversation.mjs && node tests/e2e.mjs && node tests/mobile.mjs && node tests/cards.mjs && node tests/artifacts.mjs && node tests/extras.mjs && node tests/sizes.mjs && node tests/sizes-pages.mjs && node tests/aiplayers.mjs && node tests/analytics.mjs && node tests/load.mjs 75"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

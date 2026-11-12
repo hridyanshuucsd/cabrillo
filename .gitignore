@@ -14,3 +14,5 @@ node_modules
 test-shots
 .artdb/
 .extrasdb/
+.sizesdb/
+.pagesdb/

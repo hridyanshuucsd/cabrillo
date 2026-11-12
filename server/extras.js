@@ -161,10 +161,10 @@ export const GIFTS = {
 // ---------- team roster ----------
 // Spots on a drawing of the court or field, in a 100 by 60 box.
 export const ROSTER = {
-  basketball: { surface: 'court', spots: [['pg', 'Point guard', 50, 46], ['sg', 'Shooting guard', 18, 36], ['sf', 'Small forward', 82, 36], ['pf', 'Power forward', 32, 16], ['c', 'Center', 64, 14]] },
-  volleyball: { surface: 'net', spots: [['oh1', 'Outside hitter', 18, 16], ['mb', 'Middle blocker', 50, 16], ['opp', 'Opposite', 82, 16], ['oh2', 'Outside hitter', 18, 42], ['lib', 'Libero', 50, 44], ['s', 'Setter', 82, 42]] },
-  soccer: { surface: 'pitch', spots: [['gk', 'Goalkeeper', 8, 30], ['d1', 'Defender', 28, 16], ['d2', 'Defender', 28, 44], ['m1', 'Midfielder', 52, 20], ['m2', 'Midfielder', 52, 40], ['f1', 'Forward', 78, 22], ['f2', 'Forward', 78, 38]] },
-  ultimate: { surface: 'endzone', spots: [['h1', 'Handler', 20, 18], ['h2', 'Handler', 20, 30], ['h3', 'Handler', 20, 42], ['c1', 'Cutter', 55, 12], ['c2', 'Cutter', 55, 26], ['c3', 'Cutter', 55, 40], ['c4', 'Cutter', 72, 30]] }
+  basketball: { surface: 'court', spots: [['pg', 'Point guard', 50, 46], ['sg', 'Shooting guard', 16, 34], ['sf', 'Small forward', 84, 34], ['pf', 'Power forward', 30, 12], ['c', 'Center', 70, 12]] },
+  volleyball: { surface: 'net', spots: [['oh1', 'Outside hitter', 16, 14], ['mb', 'Middle blocker', 50, 14], ['opp', 'Opposite', 84, 14], ['oh2', 'Outside hitter', 16, 44], ['lib', 'Libero', 50, 44], ['s', 'Setter', 84, 44]] },
+  soccer: { surface: 'pitch', spots: [['gk', 'Goalkeeper', 9, 30], ['d1', 'Defender', 26, 12], ['d2', 'Defender', 26, 48], ['m1', 'Midfielder', 52, 22], ['m2', 'Midfielder', 52, 40], ['f1', 'Forward', 80, 14], ['f2', 'Forward', 80, 46]] },
+  ultimate: { surface: 'endzone', spots: [['c1', 'Cutter', 13, 13], ['c2', 'Cutter', 38, 13], ['c3', 'Cutter', 62, 13], ['c4', 'Cutter', 87, 13], ['h1', 'Handler', 25, 44], ['h2', 'Handler', 50, 44], ['h3', 'Handler', 75, 44]] }
 };
 export const OPPONENTS = ['Triton Tidal', 'Muir Moose', 'Revelle Rays', 'Sixth Sense'];
 export const SIZES = ['XS', 'S', 'M', 'L', 'XL'];
