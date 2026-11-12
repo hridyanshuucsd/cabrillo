@@ -298,6 +298,10 @@ async function artifacts(label) {
   ck('the plan has a date: the next Sunday, in the afternoon', v.when?.dayName === 'Sunday' && v.when.minutes === 14 * 60 && v.when.daysAway >= 1 && v.when.daysAway <= 7, JSON.stringify(v.when));
   ck('the weather for the cove that afternoon', v.weather?.temp !== null && v.weather.place === 'La Jolla Cove' && v.weather.hours.some((x) => x.h === 14) && ['clear', 'partly', 'cloud', 'fog', 'rain', 'storm'].includes(v.weather.sky), JSON.stringify(v.weather));
   const it = v.itin;
+  await until(() => t.maps.some((m) => m.kind === 'route') && t.itin?.key?.includes(String(t.maps.find((m) => m.kind === 'route').minutes)));
+  const rc = t.maps.find((m) => m.kind === 'route');
+  ck('the day uses the same bus time as the route card in the chat', rc && t.boardView(maya).itin.stops[1].mins === rc.minutes && t.chat.some((m) => m.text.includes(`about ${rc.minutes} minutes`)), JSON.stringify([rc?.minutes, t.itin?.stops[1]]));
+  ck('the meeting time is on the 5 minutes', t.itin.start % 5 === 0);
   ck('the day: meet, bus there, the cove, back', it && it.stops.map((x) => x.kind).join() === 'meet,leg,main,leg,end' && /Bus or trolley to La Jolla Cove/.test(it.stops[1].title) && it.stops[2].label === '2 pm', JSON.stringify(it?.stops));
   t.itinerary('u2', 'shift', { delta: 1 });
   ck('moving the day 15 minutes later moves every stop', t.boardView(maya).itin.stops[2].label === '2:15 pm' && t.itin.edited);

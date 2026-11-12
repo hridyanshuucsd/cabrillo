@@ -119,23 +119,24 @@ export function sky(code) {
 // Built from the plan: meet on campus, travel there, the main thing, and the way back. Each stop has a length in
 // minutes; times follow from the start, so moving the start moves the whole day.
 const MAIN = { dinner: 90, anniversary: 120, outing: 150, trip: 360, cleanup: 120, concert: 180, volunteer: 180, birthday: 150, potluck: 180, gaming: 180, event: 150, study: 120, moving: 240, hackathon: 24 * 60, sports: 60, meeting: 45, project: 90, housing: 60, roommates: 60, beachhouse: 120 };
-export function buildItinerary(task, plan, place, travelName, when) {
+// legMinutes: the travel time from the route card when there is one, so the chat and the board say the same number.
+export function buildItinerary(task, plan, place, travelName, when, legMinutes) {
   const travel = String(travelName || '').toLowerCase();
   const leg = place ? estimate(PICKUP, place).minutes : 15;
-  // rounded up to 5 minutes, so the times read like a plan people would make
-  const mins = Math.ceil((/bus|trolley|transit|train|amtrak/.test(travel) ? leg * 2.2 + 8 : leg) / 5) * 5;
+  const mins = legMinutes || (/bus|trolley|transit|train|amtrak/.test(travel) ? Math.round(leg * 2.2 + 8) : leg);
   const how = /bus|trolley|transit/.test(travel) ? 'transit' : /train|amtrak/.test(travel) ? 'train' : /walk/.test(travel) ? 'walk' : travel ? 'car' : 'car';
   const main = MAIN[task.id] || 120;
   const startMain = when?.minutes ?? 14 * 60;
   const where = place?.name || 'the place';
   const stops = [
-    { kind: 'meet', title: 'Meet at Price Center', mins: 10 },
+    // the meeting time is a round number (on the 5 minutes); the extra minutes are spent waiting at Price Center
+    { kind: 'meet', title: 'Meet at Price Center', mins: 10 + ((startMain - mins - 10) % 5 + 5) % 5 },
     { kind: 'leg', title: `${how === 'transit' ? 'Bus or trolley' : how === 'train' ? 'Train' : how === 'walk' ? 'Walk' : 'Drive'} to ${where}`, mins, how },
     { kind: 'main', title: task.short === 'Group dinner' ? `Dinner at ${where}` : `${task.short} at ${where}`, mins: main },
     { kind: 'leg', title: 'Head back to campus', mins, how },
     { kind: 'end', title: 'Back on campus', mins: 0 }
   ];
-  return { start: Math.max(0, startMain - mins - 10), stops: stops.map((s, i) => ({ id: `s${i + 1}`, ...s })) };
+  return { start: Math.max(0, startMain - mins - stops[0].mins), stops: stops.map((s, i) => ({ id: `s${i + 1}`, ...s })) };
 }
 
 // ---------- who brings what ----------

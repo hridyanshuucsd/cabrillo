@@ -898,6 +898,7 @@ export class Table {
     this.maps.push(m);
     this.pushChat({ from: 'AI', name: 'AI', kind: 'map', mapId: m.id, text: `How to get to ${place.name} ${transit ? 'by bus or trolley' : 'by car'}: about ${m.minutes} minutes from campus.` });
     this.log('AI', 'route_shown', { id: m.id, place: place.id, mode: m.mode, minutes: m.minutes });
+    this.refreshArtifacts(); // the day uses the same travel time as this card
     this.broadcast();
   }
 
@@ -1899,8 +1900,9 @@ export class Table {
   refreshArtifacts() {
     const { h, place, when, travel } = this.aim();
     if (place && !this.itin?.edited) {
-      const key = JSON.stringify([place.id, travel, when?.minutes, when?.dayName]);
-      if (this.itin?.key !== key) this.itin = { ...buildItinerary(this.task, h, place, travel, when), key, edited: false };
+      const routeCard = this.maps.filter((m) => m.kind === 'route' && m.place?.id === place.id && m.mode === (h.travel === 'transit' ? 'transit' : 'driving')).at(-1);
+      const key = JSON.stringify([place.id, travel, when?.minutes, when?.dayName, routeCard?.minutes]);
+      if (this.itin?.key !== key) this.itin = { ...buildItinerary(this.task, h, place, travel, when, routeCard?.minutes), key, edited: false };
     }
     if (place && !this.hours[place.id]) this.checkHours(place);
     if (place && when && this.weatherOn && when.daysAway <= 15) {

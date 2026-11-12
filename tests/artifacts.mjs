@@ -55,7 +55,10 @@ try {
   const board = async (p) => { if (!(await p.getByRole('dialog', { name: 'The plan so far' }).count())) { await p.getByRole('button', { name: 'Plan board' }).click(); await p.getByRole('dialog', { name: 'The plan so far' }).waitFor(); } return p.getByRole('dialog', { name: 'The plan so far' }); };
   const shut = async (p) => { const d = p.getByRole('dialog', { name: 'The plan so far' }); if (await d.count()) await d.getByRole('button', { name: 'Close' }).first().click(); };
 
-  for (const p of ps) await say(p, 'la jolla cove on sunday afternoon, bus or trolley works');
+  // three people, three different ways of saying the same plan (they are all people; there are no AI players here)
+  await say(a, 'la jolla cove on sunday afternoon? we could take the bus');
+  await say(b, 'cove works for me, sunday afternoon is good, bus or trolley is fine');
+  await say(c, 'same, la jolla cove sunday afternoon by bus');
   const A = a.locator('.pboard');
   check('laptop: the weather card shows the cove on Sunday afternoon', await wait(A.locator('#part-weather .sky-temp')) && /La Jolla Cove/.test(await A.locator('#part-weather').innerText()) && /Sunday at 2 pm/.test(await A.locator('#part-weather').innerText()));
   check('laptop: the rain strip has one column per hour, the planned hour marked', (await A.locator('.sky-col').count()) >= 6 && (await A.locator('.sky-col.now').count()) === 1);
