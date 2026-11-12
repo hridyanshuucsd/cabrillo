@@ -84,7 +84,12 @@ async function run(label, port, env, extraArgs = []) {
     if (label === 'model') {
       check('model: a question about real places is answered with web search, with its sources as links', await ask('@ai what escape rooms are near us?') && await wait(a.getByRole('link', { name: 'Escape Room A' }).first(), 5000) && !(await a.locator('.bubble.ai').last().innerText()).includes('example.com'));
       await a.screenshot({ path: `${DIR}/model_027_search.png` });
-      check('model: the packing answer shows a list', (await a.locator('.blk-list li').count()) >= 3);
+      const seeBring = a.getByRole('button', { name: 'See who brings what' }).last();
+      const hasBtn = (await seeBring.count()) >= 1;
+      if (hasBtn) await seeBring.click();
+      check('model: the packing answer adds to who brings what, with a button to see it', hasBtn && await wait(a.locator('#part-bring .bring-name', { hasText: 'Shoes that can get wet' }).first(), 4000));
+      await a.screenshot({ path: `${DIR}/model_028_bring.png` });
+      const close = a.getByRole('button', { name: 'Close' }).first(); if (await close.isVisible().catch(() => false)) await close.click();
       check('model: the bus answer shows steps and the options to tap', (await a.locator('.blk-steps li').count()) >= 3 && (await a.locator('.bubble.ai .opts').count()) >= 1);
       check('model: the split answer shows a table with names, not codes', (await a.locator('.blk-table td').allInnerTexts()).includes('Maya'));
       await a.locator('.blk-table').last().scrollIntoViewIfNeeded(); await a.screenshot({ path: `${DIR}/model_026_answers.png` });

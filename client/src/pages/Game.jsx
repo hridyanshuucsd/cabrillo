@@ -9,6 +9,8 @@ import { emit as emitAck } from '../lib.js';
 // The flow is three steps: Briefing (your table fills while you read the task and your private limit),
 // Chat (no timer; the plan locks when everyone accepts it), and Results.
 const STATUS = { open: 'Open', split: 'Undecided', leaning: 'Leaning', agreed: 'Most agree' };
+// Buttons under an AI message that lead to the part of the board it changed.
+const BOARD_LINKS = { tasks: ['part-tasks', 'See the to-do list'], bring: ['part-bring', 'See who brings what'], agreements: ['part-agreements', 'See the agreements'], weather: ['part-weather', 'See the forecast'], day: ['part-day', 'See the day'], hours: ['part-hours', 'See opening hours'] };
 // "Kai: Bus or trolley": who goes their own way for a part where people may differ (Getting there).
 const ownText = (own) => (own.length > 2 ? `${own.length} go their own way` : own.map((x) => `${x.name}: ${x.optionName}`).join(', '));
 // What a person knows about their own situation (fine to share), and what everyone knows about the scenario.
@@ -553,7 +555,7 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
                   {m.blocks?.map((b, k) => <Block key={k} b={b} g={g} send={send} />)}
                   {m.actions === 'limit' && unshared && <ShareOptions sayMyself={sayMyself} share={share} />}
                   {m.kind === 'private' && m.answer && !g.deal && <div className="bubble-actions"><button className="metoo" onClick={followUp}>Ask a follow-up privately</button></div>}
-                  {m.board === 'tasks' && <div className="bubble-actions"><button className="metoo" onClick={() => openBoard('part-tasks')}>See the to-do list</button></div>}
+                  {BOARD_LINKS[m.board] && <div className="bubble-actions"><button className="metoo" onClick={() => openBoard(BOARD_LINKS[m.board][0])}>{BOARD_LINKS[m.board][1]}</button></div>}
                 </div>
               </div>
             );

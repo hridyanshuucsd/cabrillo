@@ -2,7 +2,7 @@
 process.env.DATABASE_URL ||= 'postgres://unused@localhost:1/unused'; // game.js needs one to load; these checks never connect
 import { applyMessage, statesWish, topicOf, buildPanel, sameMessage } from '../server/listener.js';
 import { taskById } from '../server/tasks.js';
-import { parseAnswer, jsonObjects } from '../server/ai.js';
+import { parseAnswer, jsonObjects, cleanBlocks } from '../server/ai.js';
 const results = [];
 const check = (name, ok, extra = '') => { results.push(!!ok); if (!ok) console.log(`FAIL  ${name} ${extra}`); };
 const t = taskById('outing');
@@ -104,6 +104,23 @@ check('broken JSON never shows braces as an answer', !a.blocks.length && typeof 
 a = parseAnswer(JSON.stringify({ text: 'x', blocks: [{ type: 'pick', field: 'nope' }, { type: 'table', columns: ['A'], rows: [['1'], ['2']] }, { type: 'evil', html: '<script>' }] }), t);
 check('unknown blocks and unknown plan parts are dropped', a.blocks.length === 1 && a.blocks[0].type === 'table');
 check('jsonObjects handles braces inside strings', jsonObjects('{"a": "x } y"} tail {"b": 1}').length === 2);
+
+// ---------- board artifacts ----------
+{
+  const A = await import('../server/artifacts.js');
+  check('hour of "Friday at 8 pm"', A.hourOf('Friday at 8 pm') === 20 * 60 && A.hourOf('Sunday afternoon') === 14 * 60 && A.hourOf('Thursday 7:30 pm') === 19 * 60 + 30);
+  const w = A.planWhen(['La Jolla Cove', 'Sunday morning']);
+  check('plan date: the next Sunday, never today', w.dayName === 'Sunday' && w.daysAway >= 1 && w.daysAway <= 7 && /^\d{4}-\d\d-\d\d$/.test(w.date) && new Date(`${w.date}T12:00:00Z`).getUTCDay() === 0, JSON.stringify(w));
+  check('no day named, no date', A.planWhen(['Carpool', 'Under $15']) === null);
+  const fc = A.typicalHours('Price Center food court');
+  check('typical hours: the food court is closed Saturday at 7 pm', A.openAt(fc, 6, 19 * 60).open === false && A.openAt(fc, 1, 12 * 60).open === true);
+  check('typical hours: the beach is always open, a barbecue place is a restaurant', A.typicalHours('La Jolla Cove').always && A.typicalHours('Korean barbecue on Convoy Street').kind === 'Restaurant');
+  const ph = A.parseHours({ kind: 'Bar', hours: { sun: 'closed', mon: '16:00-23:00', tue: '4pm-11pm', wed: '16:00-02:00', thu: '', fri: '12:00-01:00', sat: '12:00-01:00' } });
+  check('hours from the web: closed days, pm times, past midnight', ph.days[0] === null && ph.days[1][0] === 960 && ph.days[2][0] === 960 && ph.days[3][1] === 26 * 60 && ph.days[4] === null && A.openAt(ph, 5, 24 * 60 + 30).open === true, JSON.stringify(ph.days));
+  check('weather codes', A.sky(0) === 'clear' && A.sky(2) === 'partly' && A.sky(45) === 'fog' && A.sky(61) === 'rain' && A.sky(95) === 'storm');
+  const blocks = cleanBlocks([{ type: 'bring', items: ['Water', ''] }, { type: 'agree', items: ['We split gas'] }, { type: 'weather' }], t);
+  check('model blocks: bring and agree (at most two blocks)', blocks.length === 2 && blocks[0].items.join() === 'Water' && blocks[1].type === 'agree');
+}
 
 const failed = results.filter((x) => !x).length;
 console.log(failed ? `${failed} of ${results.length} unit checks failed` : `All ${results.length} unit checks passed.`);

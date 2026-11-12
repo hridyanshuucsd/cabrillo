@@ -2,6 +2,8 @@
 // Uses OpenAI or Anthropic when a key is set. Without a key, or when a call fails, the app falls back to rules and
 // scripted lines, so a class session never depends on the model being up.
 
+import { parseHours, typicalHours } from './artifacts.js';
+
 // ---------- provider calls ----------
 // OpenAI: the newest "Terra" model first (the balanced tier: natural chat at a fraction of the flagship price). If a
 // model name is not accepted for this key the next one is tried, and the first that works is remembered. AI_MODEL pins one.
@@ -153,6 +155,10 @@ export function cleanBlocks(blocks, task) {
     } else if (b.type === 'pick' && task.fields.some((f) => f.id === b.field)) out.push({ type: 'pick', field: b.field });
     else if (b.type === 'map') out.push({ type: 'map' });
     else if (b.type === 'todo' && strs(b.items, 8, 120).length) out.push({ type: 'todo', items: strs(b.items, 8, 120) });
+    else if (b.type === 'bring' && strs(b.items, 8, 60).length) out.push({ type: 'bring', items: strs(b.items, 8, 60) });
+    else if (b.type === 'agree' && strs(b.items, 4, 120).length) out.push({ type: 'agree', items: strs(b.items, 4, 120) });
+    else if (b.type === 'weather') out.push({ type: 'weather' });
+    else if (b.type === 'itinerary') out.push({ type: 'itinerary' });
     else if (b.type === 'pay') {
       const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 10).map((r) => ({ who: str(r?.who, 40), to: str(r?.to, 40), for: str(r?.for, 60), amount: Math.round(Number(r?.amount) * 100) / 100 }))
         .filter((r) => r.who && r.amount > 0 && r.amount < 100000);
@@ -218,7 +224,11 @@ Answer with one JSON object and nothing else:
 {"type": "map"}                           (shows the place options on a map)
 {"type": "pay", "title": "...", "rows": [{"who": "<code or AI player name>", "amount": 25.5, "to": "<code, AI player name, or a payee such as the restaurant>", "for": "..."}]}   (who owes whom how much, as a card each person can pay from through the AI; use it when people ask who owes what, want to split a cost, or want to pay; amounts in dollars, worked out from the facts given)
 {"type": "todo", "items": ["...", ...]}   (tasks the group still has to do; they are added to the group's shared to-do list, where people can claim them)
-When people ask who owes what, use a pay block (not a table) so they can pay from it. When people ask what else they need to do, use a todo block.`;
+{"type": "bring", "items": ["...", ...]}  (things someone has to bring; they are added to the group's who-brings-what list, where people claim them)
+{"type": "agree", "items": ["...", ...]}  (a rule or promise the group has clearly agreed on in the chat, such as "we split gas evenly"; it goes on the agreements card for everyone to stamp; never for something still under discussion)
+{"type": "weather"}                       (shows the forecast for the plan's place and day on the board)
+{"type": "itinerary"}                     (shows the day as a timeline on the board: meeting up, getting there, the main event, getting back)
+When people ask who owes what, use a pay block (not a table) so they can pay from it. When people ask what else they need to do, use a todo block. When people ask what to bring, use a bring block. When people ask about the weather, use a weather block and say the forecast is on the board; when they ask about the schedule or timing of the day, use an itinerary block.`;
 const PRIVATE_NOTE = `
 This question was asked privately: only the person who asked sees your answer. Speak to them directly ("you"). You may help them think through their own situation, or how to raise something with the group.
 You do not know their private limit unless they typed it in this private exchange. If they mention "my limit" without saying what it is, do not assume what it is about (money, time, travel or anything else): give wording they can fill in, or ask them what it is.
@@ -301,6 +311,21 @@ export async function menuFor(name, address) {
   }
   const hit = SAMPLE_MENUS.find(([re]) => re.test(`${name} ${address}`)) || [null, [['House special', 15], ['Salad', 10], ['Sandwich', 12], ['Soup', 8], ['Dessert', 7], ['Drink', 4]]];
   return { items: hit[1].map(([n, price]) => ({ name: n, price })), source: 'sample', sample: true };
+}
+
+// ---------- opening hours ----------
+// A place's weekly hours from web search when that works; otherwise the typical hours for that kind of place, which
+// the app labels as typical. Never invented as if real.
+export async function hoursFor(name, address) {
+  if (address && wantsSearch('opening hours')) { // only real places with an address; the game's own options get typical hours
+    try {
+      const r = await searchAnswer('Find the current opening hours of the named place in San Diego. Answer with JSON only: {"kind": "<kind of place, 1 to 3 words>", "always": false, "hours": {"sun": "11:00-21:00", "mon": "closed", "tue": "...", "wed": "...", "thu": "...", "fri": "...", "sat": "..."}} using 24-hour times. For a beach, park or trail that is always open, answer {"kind": "...", "always": true}. If you cannot find the place, answer {"hours": null}.', `Place: ${name}, ${address}`);
+      const j = r?.text ? jsonObjects(unfence(unlink(r.text))).map((o) => o.value).find((v) => v && ('hours' in v || 'always' in v)) : null;
+      const hours = parseHours(j);
+      if (hours) return { hours: { ...hours, kind: str(hours.kind, 30) }, links: r.links || [] };
+    } catch (e) { console.error('Hours search failed, using typical hours:', e.message); }
+  }
+  return { hours: typicalHours(name), links: [] };
 }
 
 export async function answerQuestion(question, ctx) {

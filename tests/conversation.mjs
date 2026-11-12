@@ -284,8 +284,72 @@ async function boardOps(label) {
   t.hostAdvance();
 }
 
+async function artifacts(label) {
+  process.env.OPENAI_API_KEY = ''; process.env.FAKE_MODEL = ''; process.env.WEATHER_FAKE = '1';
+  const ck = (name, ok, extra) => check(`${label}: ${name}`, ok, extra);
+  // an outdoor plan: weather, the day, who brings what, agreements
+  const room = { code: `W${Date.now() % 100000}`, kind: 'quick', task: 'outing', autoStart: true };
+  const t = new Table({ io, room, humans: [{ key: 'u1', name: 'Maya', userId: null, isGuest: true }, { key: 'u2', name: 'Dev', userId: null, isGuest: true }], mode: 'listen', taskId: 'outing', number: 1 });
+  const [maya, dev] = t.players;
+  await t.start(); t.ready('u1'); t.ready('u2');
+  for (const [f, o] of [['where', 'cove'], ['when', 'sun_pm'], ['travel', 'transit']]) { t.pick('u1', f, o); t.pick('u2', f, o); }
+  await until(() => t.weather && !t.weather.loading);
+  const v = t.boardView(maya);
+  ck('the plan has a date: the next Sunday, in the afternoon', v.when?.dayName === 'Sunday' && v.when.minutes === 14 * 60 && v.when.daysAway >= 1 && v.when.daysAway <= 7, JSON.stringify(v.when));
+  ck('the weather for the cove that afternoon', v.weather?.temp !== null && v.weather.place === 'La Jolla Cove' && v.weather.hours.some((x) => x.h === 14) && ['clear', 'partly', 'cloud', 'fog', 'rain', 'storm'].includes(v.weather.sky), JSON.stringify(v.weather));
+  const it = v.itin;
+  ck('the day: meet, bus there, the cove, back', it && it.stops.map((x) => x.kind).join() === 'meet,leg,main,leg,end' && /Bus or trolley to La Jolla Cove/.test(it.stops[1].title) && it.stops[2].label === '2 pm', JSON.stringify(it?.stops));
+  t.itinerary('u2', 'shift', { delta: 1 });
+  ck('moving the day 15 minutes later moves every stop', t.boardView(maya).itin.stops[2].label === '2:15 pm' && t.itin.edited);
+  t.itinerary('u1', 'add', { title: 'Boba after' });
+  ck('adding a stop puts it before getting back to campus', t.boardView(maya).itin.stops.at(-2).title === 'Boba after');
+  t.pick('u1', 'when', 'sat_am'); t.pick('u2', 'when', 'sat_am');
+  ck('an edited day stays as the group made it when the plan changes', t.itin.stops.some((x) => x.title === 'Boba after'));
+  t.itinerary('u1', 'reset');
+  ck('rebuilding the day follows the new plan', t.boardView(maya).itin.stops[2].label === '10 am' && !t.itin.edited, JSON.stringify(t.boardView(maya).itin.stops[2]));
+  ck('who brings what starts with the usual things for an outing', v.bring.length >= 4 && v.bring.every((x) => !x.owner));
+  const water = t.bring.find((x) => x.name === 'Water');
+  t.bringItem('u2', 'claim', { id: water.id }); t.bringItem('u1', 'add', { name: 'Tide pool shoes', mine: true });
+  const bv = t.boardView(maya).bring;
+  ck('claiming and adding things: names and seat colors come along', bv.find((x) => x.name === 'Water').owner === 'Dev' && bv.find((x) => x.name === 'Tide pool shoes').mine && bv.find((x) => x.name === 'Water').seat === dev.color);
+  t.agreement('u1', 'add', { text: 'We split the bus fare evenly' });
+  const g1 = t.agreements[0];
+  ck('an agreement starts with the writer stamped', g1.stamps.length === 1 && g1.stamps[0] === maya.pcode);
+  t.agreement('u2', 'stamp', { id: g1.id });
+  ck('everyone stamps it', t.boardView(dev).agreements[0].stamps.length === 2 && t.boardView(dev).agreements[0].mine);
+  ck('the hours card shows the cove as open all day', t.boardView(maya).hours.cove?.always === true);
+  ck('nothing on the board shows a player code', !/"(name|owner|byName)":"[PA]0\d"/.test(JSON.stringify(t.boardView(maya))));
+  t.hostAdvance();
+  // a place that is closed at the planned time
+  const room2 = { code: `H${Date.now() % 100000}`, kind: 'quick', task: 'dinner', autoStart: true };
+  const d = new Table({ io, room: room2, humans: [{ key: 'v1', name: 'Ana', userId: null, isGuest: true }, { key: 'v2', name: 'Kai', userId: null, isGuest: true }], mode: 'listen', taskId: 'dinner', number: 1 });
+  await d.start(); d.ready('v1'); d.ready('v2');
+  d.pick('v1', 'where', 'pricecenter'); d.pick('v2', 'where', 'pricecenter');
+  d.pick('v1', 'when', 'sat7'); d.pick('v2', 'when', 'sat7');
+  await until(() => d.chat.some((m) => /closed on Saturday at 7 pm/.test(m.text)));
+  const warn = d.chat.find((m) => /closed on Saturday at 7 pm/.test(m.text));
+  ck('the AI says once that the food court is usually closed then', warn && /usually/.test(warn.text) && warn.board === 'hours', warn?.text);
+  d.say('v1', 'ok noted'); await sleep(30);
+  ck('only once', d.chat.filter((m) => /closed on Saturday/.test(m.text)).length === 1);
+  ck('weather stays off for an indoor plan until asked', d.boardView(d.players[0]).weatherOn === false);
+  d.wantWeather('v2');
+  await until(() => d.weather && !d.weather.loading);
+  ck('asking for the weather turns it on', d.boardView(d.players[0]).weather?.temp !== null && d.boardView(d.players[0]).weatherOn);
+  d.hostAdvance();
+  // an answer-only table never gets the heads-up
+  const room3 = { code: `J${Date.now() % 100000}`, kind: 'quick', task: 'dinner', autoStart: true };
+  const a = new Table({ io, room: room3, humans: [{ key: 'w1', name: 'Bo', userId: null, isGuest: true }, { key: 'w2', name: 'Li', userId: null, isGuest: true }], mode: 'ask', taskId: 'dinner', number: 1 });
+  await a.start(); a.ready('w1'); a.ready('w2');
+  for (const k of ['w1', 'w2']) { a.pick(k, 'where', 'pricecenter'); a.pick(k, 'when', 'sat7'); }
+  await sleep(200);
+  ck('answer-only: no heads-up, but the hours card still shows it closed', !a.chat.some((m) => /closed on/.test(m.text)) && a.boardView(a.players[0]).hours.pricecenter?.week?.[6]?.[1] === 18 * 60);
+  a.hostAdvance();
+  delete process.env.WEATHER_FAKE;
+}
+
 try {
   await boardOps('board');
+  await artifacts('artifacts');
   await beach('beach house, listening', { mode: 'listen' });
   await beach('beach house, answer-only', { mode: 'ask' });
   await beach('beach house, model', { mode: 'listen', key: true });

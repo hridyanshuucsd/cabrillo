@@ -61,7 +61,8 @@ globalThis.fetch = async (url, opts) => {
       { name: 'Balboa Park', pros: ['Lots of shade and museums', 'Easy by bus'], cons: ['Museums cost extra'] }] }] });
     else if (/privately|between us/i.test(q) || /asked privately/.test(user.slice(-400))) content = `You could just say it plainly. ${JSON.stringify({ type: 'list', title: 'Ways to say it', items: ['Mention it early', 'Offer an option that works'] })}`;
     else
-    if (/bring/i.test(q)) content = JSON.stringify({ text: 'Here is a short packing list for the cove.', blocks: [{ type: 'list', title: 'What to bring', items: ['Water', 'Sunscreen', 'A towel', 'Shoes that can get wet'] }] });
+    if (/bring/i.test(q)) content = JSON.stringify({ text: 'I put a few things on the who-brings-what list.', blocks: [{ type: 'bring', items: ['Water', 'A towel', 'Shoes that can get wet'] }] });
+    else if (/weather|rain/i.test(q)) content = JSON.stringify({ text: 'The forecast is on the board.', blocks: [{ type: 'weather' }] });
     else if (/split|cost|each/i.test(q)) content = JSON.stringify({ text: 'Split three ways, it comes to 20 dollars each.', blocks: [{ type: 'table', title: 'Split', columns: ['Person', 'Pays'], rows: [['p01', '$20'], ['Ari', '$20'], ['Kai', '$20']] }] });
     else if (/how do|get there|steps/i.test(q)) content = JSON.stringify({ text: 'Take the bus from campus.', blocks: [{ type: 'steps', title: 'By bus', items: ['Walk to the campus stop', 'Ride the bus to La Jolla', 'Walk five minutes to the cove'] }, { type: 'pick', field: 'travel' }] });
     else content = JSON.stringify({ text: 'A sea lion can hold its breath for about 10 minutes.' });

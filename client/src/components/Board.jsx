@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { emit } from '../lib.js';
 import MapView, { gmapsDirections, gmapsPlace } from './MapView.jsx';
 import { MapCard, RideCard, TableCard, BillCard } from './Cards.jsx';
+import { OpeningHours, Itinerary, Weather, Bring, Agreements, Ticket } from './Artifacts.jsx';
 
 // The plan board: one live view of the whole plan that everyone at the table can use. It sits beside the chat on a
 // wide screen and opens as a sheet on a phone. Each part of the plan gets the widget that fits it: an availability
@@ -285,12 +286,18 @@ export default function PlanBoard({ g, send, onAccept, onClose }) {
           <CalendarLinks g={g} plan={g.plan} />
         </section>
       )}
+      <Ticket g={g} />
       {g.panel.map((f) => (
         <section key={f.id} className={`pcard ${f.status}`} id={`part-${f.id}`}>
           <div className="row between"><strong>{f.name}</strong><span className={`chip ${f.status === 'agreed' ? 'ok' : f.status === 'split' ? 'warn' : ''}`}>{f.status === 'agreed' ? f.leaderName : STATUS[f.status]}</span></div>
           <PartWidget g={g} send={send} id={f.id} onMenu={openMenu} />
         </section>
       ))}
+      <Weather g={g} send={send} />
+      <OpeningHours g={g} />
+      <Itinerary g={g} send={send} />
+      <Bring g={g} send={send} />
+      <Agreements g={g} send={send} />
       {Object.entries(b.menus || {}).map(([id, m]) => <MenuCard key={id} g={g} send={send} id={id} m={m} />)}
       {cards.length > 0 && <div className="label" style={{ marginTop: 6 }}>Cards</div>}
       {cards.map((m) => {

@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import { taskById, fieldName, optionName, planComplete } from './tasks.js';
 import { applyMessage, buildPanel, findConflict, topicOf, topicIn, isQuestion, statesWish, detectOptions, sameMessage } from './listener.js';
 import { q, logEvent } from './db.js';
-import { answerQuestion, summarize, aiMode, playerLine, wantsCompare, menuFor } from './ai.js';
+import { answerQuestion, summarize, aiMode, playerLine, wantsCompare, menuFor, hoursFor } from './ai.js';
+import { planWhen, clock, openAt, forecast, sky, buildItinerary, BRING, OUTDOOR } from './artifacts.js';
 import { FACTS, ROLE, BILLS, firstPerson } from './facts.js';
 import { PICKUP, placeField, placeOf, placesOf, estimate, route, rideOptions, slotsFor, driver, driverStart, fieldKind, searchPlaces } from './places.js';
 
@@ -93,6 +94,11 @@ export class Table {
     this.bills = [];
     // The plan board: availability marks, tasks, menus, and a history of changes.
     this.avail = {}; this.todos = []; this.menus = {}; this.history = []; this.customN = 0; this.todoN = 0;
+    // More board artifacts: agreements the group stamps, who brings what, the day as a timeline, the weather, and
+    // opening hours for each place (see artifacts.js).
+    this.agreements = []; this.agreeN = 0;
+    this.bring = (BRING[this.task.id] || []).map((x, i) => ({ id: `b${i + 1}`, ...x, owner: null, by: 'app' })); this.bringN = this.bring.length;
+    this.itin = null; this.weather = null; this.weatherOn = OUTDOOR.has(this.task.id); this.hours = {}; this.closedWarned = new Set();
     this.nextP = 1; this.nextAI = 0;
     this.players = [];
     this.forming = !!forming;
@@ -646,6 +652,14 @@ export class Table {
     if (todoBlk && !priv) { this.addTodosFromAI(todoBlk.items); extra.blocks = extra.blocks.filter((b) => b !== todoBlk); extra.board = 'tasks'; }
     const pay = blocks.find((b) => b.type === 'pay');
     if (pay && !priv) extra.blocks = extra.blocks.filter((b) => b !== pay);
+    for (const b of blocks) {
+      if (priv || !['bring', 'agree', 'weather', 'itinerary'].includes(b.type)) continue;
+      extra.blocks = extra.blocks.filter((x) => x !== b);
+      if (b.type === 'bring') { this.bringFromAI(b.items); extra.board = 'bring'; }
+      if (b.type === 'agree') { this.agreementsFromAI(b.items); extra.board = 'agreements'; }
+      if (b.type === 'weather') { this.wantWeather(null); extra.board = 'weather'; }
+      if (b.type === 'itinerary') { this.refreshArtifacts(); extra.board = 'day'; }
+    }
     reply(fix(a.text), 'ai_answer', { source: a.source, blocks: blocks.map((b) => b.type) }, extra);
     if (pay && !priv) this.billFromModel(pay, p);
     if (!priv && blocks.some((b) => b.type === 'map') && placesOf(this.task).length) { this.showMap(p, true); this.broadcast(); }
@@ -755,6 +769,7 @@ export class Table {
     if (this.stage !== 'chat' || this.deal) { this.broadcast(); return; }
     this.lastChangeAt = Date.now();
     this.syncPlan();
+    this.refreshArtifacts();
     this.queueAiFollow();
     if (this.mode === 'listen') {
       this.privateAlerts();
@@ -1870,6 +1885,175 @@ export class Table {
     };
   }
 
+
+  // ---------- more board artifacts ----------
+  // Where and when the group is heading: the agreed choice for each part, or the leading one before that.
+  aim() {
+    const h = { ...this.heading(), ...this.plan };
+    const pf = placeField(this.task);
+    const place = pf && h[pf] ? placeOf(this.task, h[pf]) : null;
+    const names = this.task.fields.map((f) => (h[f.id] ? optionName(this.task, f.id, h[f.id]) : '')).filter(Boolean);
+    return { h, place, when: planWhen(names), travel: h.travel ? optionName(this.task, 'travel', h.travel) : '' };
+  }
+  // Keeps the itinerary, hours and weather in step with the plan. Lookups run in the background and broadcast.
+  refreshArtifacts() {
+    const { h, place, when, travel } = this.aim();
+    if (place && !this.itin?.edited) {
+      const key = JSON.stringify([place.id, travel, when?.minutes, when?.dayName]);
+      if (this.itin?.key !== key) this.itin = { ...buildItinerary(this.task, h, place, travel, when), key, edited: false };
+    }
+    if (place && !this.hours[place.id]) this.checkHours(place);
+    if (place && when && this.weatherOn && when.daysAway <= 15) {
+      const key = `${place.id}|${when.date}`;
+      if (this.weather?.key !== key) this.loadWeather(place, when, key);
+    }
+    this.closedCheck();
+  }
+  async checkHours(place) {
+    this.hours[place.id] = { loading: true };
+    let r = { hours: null, links: [] };
+    try { r = await hoursFor(place.name, place.address || ''); } catch { /* no hours */ }
+    this.hours[place.id] = { loading: false, hours: r.hours, links: r.links || [] };
+    this.log('system', 'hours_checked', { place: place.id, source: r.hours?.source || null });
+    if (this.stage === 'chat') { this.closedCheck(); this.broadcast(); }
+  }
+  async loadWeather(place, when, key) {
+    this.weather = { key, loading: true, place: place.name, when };
+    const data = await forecast(place.lat, place.lng, when.date);
+    if (this.weather?.key !== key) return;
+    this.weather = { key, loading: false, place: place.name, when, data };
+    this.log('system', 'weather_loaded', { place: place.id, date: when.date, ok: !!data });
+    if (this.stage === 'chat') this.broadcast();
+  }
+  // Listening tables: one short heads-up when the place the group is heading to is closed at the planned time.
+  closedCheck() {
+    if (!this.listening() || this.stage !== 'chat' || this.deal) return;
+    const { place, when } = this.aim();
+    if (!place || !when || when.minutes === null) return;
+    const hrs = this.hours[place.id]?.hours;
+    const st = openAt(hrs, when.weekday, when.minutes);
+    const key = `${place.id}|${when.weekday}|${when.minutes}`;
+    if (st.open !== false || this.closedWarned.has(key) || Date.now() - this.lastAiSayAt < sec(6)) return;
+    this.closedWarned.add(key);
+    const typical = hrs?.source === 'typical' ? 'usually ' : '';
+    const range = st.today ? ` It is ${typical}open ${clock(st.today[0])} to ${clock(st.today[1])} that day.` : '';
+    this.aiSay(`Heads up: ${place.name} is ${typical}closed on ${when.dayName} at ${clock(when.minutes)}.${range}`, 'closed_heads_up', { place: place.id, day: when.weekday, minutes: when.minutes, source: hrs?.source }, false, null, { board: 'hours' });
+  }
+  // Agreements: things the group promised each other. Anyone writes one; each person stamps it when they agree.
+  agreement(key, action, a = {}) {
+    const p = this.player(key);
+    if (!p || p.isAI || this.stage === 'done') return;
+    const x = this.agreements.find((y) => y.id === a.id);
+    if (action === 'add') {
+      const text = String(a.text || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      if (text.length < 3 || this.agreements.length >= 12) return;
+      this.agreements.push({ id: `g${++this.agreeN}`, text, by: p.pcode, stamps: [p.pcode] });
+      this.note(`${p.name} wrote an agreement: ${text}`);
+    } else if (!x) return;
+    else if (action === 'stamp') {
+      const on = !x.stamps.includes(p.pcode);
+      x.stamps = on ? [...x.stamps, p.pcode] : x.stamps.filter((c) => c !== p.pcode);
+      this.note(`${p.name} ${on ? 'agreed to' : 'took back agreeing to'}: ${x.text}`);
+    } else if (action === 'remove') { this.agreements = this.agreements.filter((y) => y !== x); this.note(`${p.name} removed an agreement: ${x.text}`); }
+    else return;
+    this.log(p.pcode, 'agreement', { action, id: a.id || this.agreements[this.agreements.length - 1]?.id });
+    this.broadcast();
+  }
+  agreementsFromAI(items) {
+    for (const text of items) if (this.agreements.length < 12 && !this.agreements.some((y) => y.text.toLowerCase() === text.toLowerCase())) this.agreements.push({ id: `g${++this.agreeN}`, text, by: 'AI', stamps: [] });
+    this.note(`The AI wrote down ${items.length} agreement${items.length === 1 ? '' : 's'}`);
+  }
+  // Who brings what: claim an item, add one, or remove one nobody needs.
+  bringItem(key, action, a = {}) {
+    const p = this.player(key);
+    if (!p || p.isAI || this.stage === 'done') return;
+    const x = this.bring.find((y) => y.id === a.id);
+    if (action === 'add') {
+      const name = String(a.name || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+      if (name.length < 2 || this.bring.length >= 30) return;
+      this.bring.push({ id: `b${++this.bringN}`, cat: 'Added', name, owner: a.mine ? p.pcode : null, by: p.pcode });
+      this.note(`${p.name} added ${name} to the list`);
+    } else if (!x) return;
+    else if (action === 'claim') { x.owner = x.owner === p.pcode ? null : p.pcode; this.note(`${p.name} ${x.owner ? 'will bring' : 'is no longer bringing'} ${x.name.toLowerCase()}`); }
+    else if (action === 'remove') { this.bring = this.bring.filter((y) => y !== x); this.note(`${p.name} took ${x.name.toLowerCase()} off the list`); }
+    else return;
+    this.log(p.pcode, 'bring', { action, id: a.id || this.bring[this.bring.length - 1]?.id });
+    this.broadcast();
+  }
+  bringFromAI(items) {
+    let n = 0;
+    for (const name of items) if (this.bring.length < 30 && !this.bring.some((y) => y.name.toLowerCase() === name.toLowerCase())) { this.bring.push({ id: `b${++this.bringN}`, cat: 'From the AI', name, owner: null, by: 'AI' }); n++; }
+    if (n) this.note(`The AI added ${n} thing${n === 1 ? '' : 's'} to bring`);
+  }
+  // The itinerary: move the whole day by 15 minutes, make a stop longer or shorter, rename, add or remove a stop.
+  // Any edit keeps the itinerary as the group made it; "reset" builds it again from the plan.
+  itinerary(key, action, a = {}) {
+    const p = this.player(key);
+    if (!p || p.isAI || this.stage === 'done' || !this.itin) return;
+    const it = this.itin; const st = it.stops.find((x) => x.id === a.id);
+    const d = Number(a.delta) > 0 ? 15 : -15;
+    if (action === 'shift') { it.start = Math.max(0, Math.min(23 * 60 + 45, it.start + d)); this.note(`${p.name} moved the day to start at ${clock(it.start)}`); }
+    else if (action === 'length' && st && st.kind !== 'end') { st.mins = Math.max(5, Math.min(12 * 60, st.mins + d)); this.note(`${p.name} made "${st.title}" ${st.mins} min`); }
+    else if (action === 'rename' && st) { const t = String(a.title || '').replace(/\s+/g, ' ').trim().slice(0, 60); if (t.length < 2) return; st.title = t; this.note(`${p.name} renamed a stop to "${t}"`); }
+    else if (action === 'add') {
+      const t = String(a.title || '').replace(/\s+/g, ' ').trim().slice(0, 60); if (t.length < 2 || it.stops.length >= 10) return;
+      const at = Math.max(1, it.stops.findIndex((x) => x.kind === 'end'));
+      it.stops.splice(at === -1 ? it.stops.length : at, 0, { id: `s${Date.now().toString(36)}`, kind: 'extra', title: t, mins: 30 });
+      this.note(`${p.name} added "${t}" to the day`);
+    } else if (action === 'remove' && st && !['meet', 'end'].includes(st.kind)) { it.stops = it.stops.filter((x) => x !== st); this.note(`${p.name} removed "${st.title}" from the day`); }
+    else if (action === 'reset') { this.itin = null; this.refreshArtifacts(); this.note(`${p.name} rebuilt the day from the plan`); this.log(p.pcode, 'itinerary', { action }); return this.broadcast(); }
+    else return;
+    it.edited = true;
+    this.log(p.pcode, 'itinerary', { action, id: a.id || null });
+    this.broadcast();
+  }
+  // Show the weather for this plan (for indoor scenarios it appears only when someone asks).
+  wantWeather(key) {
+    const p = key ? this.player(key) : null;
+    if (key && (!p || p.isAI)) return;
+    this.weatherOn = true;
+    if (p) this.log(p.pcode, 'weather_requested', {});
+    this.refreshArtifacts(); this.broadcast();
+  }
+  artifactsView(me) {
+    const name = (c) => (c === 'AI' ? 'AI' : this.nameOf(this.byCode(c)) || c);
+    const seat = (c) => this.byCode(c)?.color || null; // the same color as the person's avatar in the chat
+    const { place, when } = this.aim();
+    // opening hours for each place option, judged at the planned day and time
+    const hours = {};
+    for (const pl of placesOf(this.task)) {
+      const h = this.hours[pl.id];
+      if (!h) continue;
+      const st = when ? openAt(h.hours, when.weekday, when.minutes) : { open: null };
+      hours[pl.id] = { loading: !!h.loading, kind: h.hours?.kind || null, source: h.hours?.source || null, always: !!h.hours?.always,
+        today: st.today || null, open: st.open, week: h.hours?.always ? null : h.hours?.days || null, links: h.links || [] };
+    }
+    let itin = null;
+    if (this.itin) {
+      let t = this.itin.start;
+      itin = { start: this.itin.start, edited: this.itin.edited, stops: this.itin.stops.map((x) => { const at = t; t += x.mins; return { ...x, at, label: clock(at) }; }) };
+      itin.end = t; itin.endLabel = clock(t);
+    }
+    let weather = null;
+    if (this.weatherOn && this.weather) {
+      const w = this.weather;
+      const hrs = w.data?.hours || [];
+      const at = Math.floor((w.when?.minutes ?? 14 * 60) / 60);
+      const now = hrs.find((x) => x.h === at) || hrs[Math.floor(hrs.length / 2)];
+      weather = { loading: !!w.loading, place: w.place, dayName: w.when?.dayName, date: w.when?.date, hour: at, hourLabel: clock(at * 60),
+        sky: now ? sky(now.code) : null, temp: now?.temp ?? null, rain: now?.rain ?? null, source: w.data?.source || null,
+        hi: hrs.length ? Math.max(...hrs.map((x) => x.temp)) : null, lo: hrs.length ? Math.min(...hrs.map((x) => x.temp)) : null,
+        hours: hrs.filter((x) => x.h >= Math.max(6, at - 4) && x.h <= Math.min(23, at + 5)).map((x) => ({ ...x, sky: sky(x.code), label: clock(x.h * 60) })) };
+    } else if (this.weatherOn) weather = { waiting: true, needs: !place ? 'place' : !when ? 'day' : when.daysAway > 15 ? 'far' : 'place' };
+    return {
+      when: when ? { ...when, label: `${when.dayName}${when.minutes !== null ? ` at ${clock(when.minutes)}` : ''}`, dateLabel: when.date } : null,
+      placeName: place?.name || null, placeId: place?.id || null, hours, itin, weather, weatherOn: this.weatherOn,
+      agreements: this.agreements.map((x) => ({ id: x.id, text: x.text, byName: name(x.by), byAI: x.by === 'AI', stamps: x.stamps.map((c) => ({ name: name(c), seat: seat(c), you: me && c === me.pcode })), mine: !!me && x.stamps.includes(me.pcode) })),
+      people: this.humans().length,
+      bring: this.bring.map((x) => ({ id: x.id, cat: x.cat, name: x.name, owner: x.owner ? name(x.owner) : null, seat: x.owner ? seat(x.owner) : null, mine: !!me && x.owner === me.pcode, byAI: x.by === 'AI' }))
+    };
+  }
+
   // Everything the board shows that is not already in the panel: availability, places, tasks, menus, history.
   boardView(me) {
     const name = (c) => this.nameOf(this.byCode(c)) || c;
@@ -1889,7 +2073,7 @@ export class Table {
       mine: me ? m.orders[me.pcode] || {} : {},
       orders: Object.entries(m.orders).map(([c, items]) => ({ name: name(c), you: me && c === me.pcode, items: Object.entries(items).map(([i, q]) => ({ name: m.items.find((x) => x.id === i)?.name, qty: q, price: m.items.find((x) => x.id === i)?.price || 0 })) })) }]));
     return { avail, places, origin: PICKUP, placeField: placeField(this.task), todos: this.todos.map((t) => ({ ...t, ownerName: t.owner ? name(t.owner) : null, mine: me && t.owner === me.pcode, byName: t.by === 'AI' ? 'AI' : name(t.by) })),
-      menus, history: this.history.slice(-40).map((h) => ({ ...h, text: h.text })), changes: this.history.length, summary: this.mode === 'listen' ? null : this.hearingRule() };
+      menus, history: this.history.slice(-40).map((h) => ({ ...h, text: h.text })), changes: this.history.length, summary: this.mode === 'listen' ? null : this.hearingRule(), ...this.artifactsView(me) };
   }
 
   // The chat as one person sees it. "Me too" under a message is offered only where it adds a pick for this person:
