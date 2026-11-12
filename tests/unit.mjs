@@ -122,6 +122,18 @@ check('jsonObjects handles braces inside strings', jsonObjects('{"a": "x } y"} t
   check('model blocks: bring and agree (at most two blocks)', blocks.length === 2 && blocks[0].items.join() === 'Water' && blocks[1].type === 'agree');
 }
 
+// ---------- second set ----------
+{
+  const E = await import('../server/extras.js');
+  check('car seats from a fact', E.seatsFromFact('You have a car with room for 4 people.') === 3 && E.seatsFromFact('You have a small car with room for 1 more person.') === 1 && E.seatsFromFact('You do not have a car, but you have a bike.') === 0);
+  const d = taskById('dinner');
+  check('budget ranges from option names', JSON.stringify(E.budgetRange(d, { budget: 'mid' })) === JSON.stringify({ lo: 15, hi: 30, name: '$15 to $30', total: false }) && E.budgetRange(d, { budget: 'high' }).hi === null && E.budgetRange(taskById('event'), { budget: 'under50' }).total);
+  check('every scenario with costs gives a number per person', ['outing', 'dinner', 'trip', 'birthday', 'concert', 'potluck', 'volunteer', 'cleanup', 'gaming', 'study', 'moving', 'sports', 'anniversary', 'roommates', 'housing'].every((id) => {
+    const tk = taskById(id); const plan = Object.fromEntries(tk.fields.map((f) => [f.id, f.options[0].id])); const c = E.costFor(tk, plan, 4); return c === null || (Number.isFinite(c.total) && c.items.every((x) => x.label && Number.isFinite(x.amount)));
+  }));
+  check('room slots stay inside the day', E.roomSlots(taskById('study'), { when: 'mon', length: 'h3' }).every((o) => /Monday/.test(o.name)));
+}
+
 const failed = results.filter((x) => !x).length;
 console.log(failed ? `${failed} of ${results.length} unit checks failed` : `All ${results.length} unit checks passed.`);
 process.exit(failed ? 1 : 0);

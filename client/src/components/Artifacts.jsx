@@ -218,8 +218,8 @@ export function Agreements({ g, send }) {
   const [text, setText] = useState('');
   return (
     <section className="pcard" id="part-agreements">
-      <div className="row between"><strong>Agreements</strong><span className="small muted">{list.filter((x) => x.stamps.length >= people).length} of {list.length} signed by all</span></div>
-      {list.length === 0 && <div className="small muted">Write down what the group promised each other, like "we split gas evenly" or "whoever books gets paid back tonight". Everyone stamps it.</div>}
+      <div className="row between"><strong>{g.task.id === 'roommates' ? 'House rules' : 'Agreements'}</strong>{list.length > 0 && <span className="small muted">{list.filter((x) => x.stamps.length >= people).length} of {list.length} signed by all</span>}</div>
+      {list.length === 0 && <div className="small muted">{g.task.id === 'roommates' ? 'Each part of the plan the group agrees on becomes a house rule here for everyone to sign. You can add your own rules too.' : 'Write down what the group promised each other, like "we split gas evenly" or "whoever books gets paid back tonight". Everyone stamps it.'}</div>}
       {list.map((x) => {
         const all = x.stamps.length >= people && people > 0;
         return (
@@ -235,7 +235,7 @@ export function Agreements({ g, send }) {
                 <button className="linkbtn small" aria-label={`Remove: ${x.text}`} onClick={() => send('game:agree', { action: 'remove', id: x.id })}>×</button>
               </span>}
             </div>
-            <div className="tiny muted">{x.byAI ? 'Written down by the AI from the chat' : `Written by ${x.byName}`}{all ? ' · everyone agreed' : ''}</div>
+            <div className="tiny muted">{x.fromPlan ? 'From the plan: everyone signs' : x.byAI ? 'Written down by the AI from the chat' : `Written by ${x.byName}`}{all ? ' · everyone agreed' : ''}</div>
           </div>
         );
       })}

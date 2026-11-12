@@ -158,6 +158,7 @@ export function cleanBlocks(blocks, task) {
     else if (b.type === 'bring' && strs(b.items, 8, 60).length) out.push({ type: 'bring', items: strs(b.items, 8, 60) });
     else if (b.type === 'agree' && strs(b.items, 4, 120).length) out.push({ type: 'agree', items: strs(b.items, 4, 120) });
     else if (b.type === 'weather') out.push({ type: 'weather' });
+    else if (b.type === 'quiz') { const items = (Array.isArray(b.items) ? b.items : []).slice(0, 8).map((x) => ({ q: str(x?.q, 160), a: str(x?.a, 160) })).filter((x) => x.q && x.a); if (items.length) out.push({ type: 'quiz', items }); }
     else if (b.type === 'itinerary') out.push({ type: 'itinerary' });
     else if (b.type === 'pay') {
       const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 10).map((r) => ({ who: str(r?.who, 40), to: str(r?.to, 40), for: str(r?.for, 60), amount: Math.round(Number(r?.amount) * 100) / 100 }))
@@ -227,6 +228,7 @@ Answer with one JSON object and nothing else:
 {"type": "bring", "items": ["...", ...]}  (things someone has to bring; they are added to the group's who-brings-what list, where people claim them)
 {"type": "agree", "items": ["...", ...]}  (a rule or promise the group has clearly agreed on in the chat, such as "we split gas evenly"; it goes on the agreements card for everyone to stamp; never for something still under discussion)
 {"type": "weather"}                       (shows the forecast for the plan's place and day on the board)
+{"type": "quiz", "items": [{"q": "...", "a": "..."}]}   (practice questions with short answers; they become flashcards the group studies on the board; use it when people ask to be quizzed or for practice questions)
 {"type": "itinerary"}                     (shows the day as a timeline on the board: meeting up, getting there, the main event, getting back)
 When people ask who owes what, use a pay block (not a table) so they can pay from it. When people ask what else they need to do, use a todo block. When people ask what to bring, use a bring block. When people ask about the weather, use a weather block and say the forecast is on the board; when they ask about the schedule or timing of the day, use an itinerary block.`;
 const PRIVATE_NOTE = `

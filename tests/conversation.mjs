@@ -351,7 +351,147 @@ async function artifacts(label) {
   delete process.env.WEATHER_FAKE;
 }
 
+async function secondSet(label) {
+  process.env.OPENAI_API_KEY = ''; process.env.FAKE_MODEL = '';
+  const ck = (name, ok, extra) => check(`${label}: ${name}`, ok, extra);
+  let n = 0;
+  const make = async (task, mode = 'listen', people = ['Maya', 'Dev']) => {
+    const room = { code: `X${++n}${Date.now() % 10000}`, kind: 'quick', task, autoStart: true };
+    const t = new Table({ io, room, humans: people.map((name, i) => ({ key: `k${i}`, name, userId: null, isGuest: true })), mode, taskId: task, number: 1 });
+    await t.start(); for (let i = 0; i < people.length; i++) t.ready(`k${i}`);
+    return t;
+  };
+  const both = (t, f, o) => { t.pick('k0', f, o); t.pick('k1', f, o); };
+  const X = (t, i = 0) => t.boardView(t.players[i]).x;
+  const safe = (t) => !/"name":"[PA]0\d"/.test(JSON.stringify(t.boardView(t.players[0])));
+
+  // live cost, with the budget the group picked
+  let t = await make('dinner');
+  both(t, 'where', 'convoy'); both(t, 'travel', 'transit'); both(t, 'budget', 'mid');
+  let c = X(t).cost;
+  ck('cost: dinner on Convoy by bus is $30 + $5 each', c && c.total === 35 && c.budget.hi === 30, JSON.stringify(c));
+  await until(() => t.chat.some((m) => /about \$35 each, more than the budget you agreed on \(\$15 to \$30\)/.test(m.text)));
+  ck('cost: the listening AI says once that it is over the agreed budget', t.chat.filter((m) => /more than the budget you agreed on/.test(m.text)).length === 1);
+  // carpool seats: AI players with a car offer to drive, the rest take seats; a person moves cars
+  both(t, 'travel', 'carpool');
+  const cars = X(t).cars;
+  ck('carpool: the card appears when the plan says carpool, with everyone listed', cars && cars.list.length + cars.without.length >= 1);
+  t.extra('k0', 'car', 'drive', { seats: 3 });
+  const car = t.cars.find((x) => x.driver === t.players[0].pcode);
+  t.extra('k1', 'car', 'ride', { id: car.id });
+  ck('carpool: Maya drives with 3 seats and Dev rides with her', car.seats === 3 && car.riders.includes(t.players[1].pcode) && X(t, 1).cars.list.find((x) => x.id === car.id).inIt);
+  t.extra('k1', 'car', 'ride', { id: car.id });
+  ck('carpool: taking the same seat twice changes nothing', car.riders.filter((x) => x === t.players[1].pcode).length === 1);
+  ck('carpool: no codes on the board', safe(t));
+  t.hostAdvance();
+
+  // roommates: chore chart with a trade, and house rules from the plan
+  t = await make('roommates', 'listen', ['Ana', 'Kai', 'Lee']);
+  let ch = X(t).chores;
+  ck('chores: four chores over four weeks, rotating', ch && ch.weeks.length === 4 && ch.weeks[0][0].name !== ch.weeks[1][0].name);
+  const mine = ch.weeks[0].findIndex((x) => x.name === 'Ana'), other = ch.weeks[0].findIndex((x) => x.name !== 'Ana');
+  t.extra('k0', 'chore', 'swap', { week: 0, a: mine, b: other });
+  ch = X(t).chores;
+  ck('chores: Ana trades her week-1 chore', ch.weeks[0][other].name === 'Ana' && ch.weeks[0][mine].name !== 'Ana');
+  for (const k of ['k0', 'k1', 'k2']) t.pick(k, 'quiet', 'q10');
+  ck('house rules: an agreed part becomes a rule to sign', t.agreements.some((g) => g.text === 'Quiet hours: From 10 pm' && g.field === 'quiet'));
+  for (const k of ['k0', 'k1', 'k2']) t.pick(k, 'quiet', 'q12');
+  ck('house rules: the rule follows the plan and asks for signatures again', t.agreements.filter((g) => g.field === 'quiet').length === 1 && t.agreements.find((g) => g.field === 'quiet').text === 'Quiet hours: From midnight');
+  t.hostAdvance();
+
+  // group project: work split and timeline
+  t = await make('project');
+  both(t, 'split', 'role'); both(t, 'draft', 'wed');
+  let w = X(t).work;
+  ck('work split: roles to take, a draft day and a final day', w && w.items.map((x) => x.title).join() === 'Research,Writing,Editing,Slides' && w.dates.draft.label === 'Draft, Wednesday' && w.dates.final.days > w.dates.draft.days, JSON.stringify(w?.dates));
+  t.extra('k1', 'list', 'take', { list: 'work', id: w.items[1].id }); t.extra('k1', 'list', 'status', { list: 'work', id: w.items[1].id });
+  t.extra('k0', 'list', 'take', { list: 'work', id: w.items[1].id });
+  w = X(t).work;
+  ck('work split: Dev writes, it is in progress, and one person per role', w.items[1].takers.map((x) => x.name).join() === 'Dev' && w.items[1].status === 'doing');
+  t.hostAdvance();
+  t = await make('hackathon'); both(t, 'roles', 'pair');
+  ck('hackathon: pairs, and a 24 hour timeline from 10 am', X(t).work.items.length === 2 && X(t).work.cap === 2 && X(t).work.milestones[0].at === '10 am');
+  t.hostAdvance();
+
+  // concert tickets: private answers, then one person buys and a bill follows
+  t = await make('concert');
+  both(t, 'show', 'jazz');
+  let tk = X(t).tickets;
+  ck('tickets: three ways to see the jazz show', tk && tk.options.length === 3 && tk.answered >= 0);
+  t.extra('k0', 'private', 'answer', { name: 'tickets', ids: ['lawn', 'reserved'] });
+  t.extra('k1', 'private', 'answer', { name: 'tickets', ids: ['lawn'] });
+  tk = X(t).tickets;
+  ck('tickets: once everyone answered, only what works for all is shown', tk.answered === tk.of && tk.common.includes('lawn') && !tk.common.includes('box') && !('answers' in tk));
+  t.extra('k1', 'private', 'book', { name: 'tickets', id: 'lawn' });
+  ck('tickets: Dev buys lawn tickets and the others owe him', X(t).tickets.status === 'booked' && t.bills.at(-1)?.rows.every((r) => r.to === t.players[1].pcode && r.amount === 35));
+  t.hostAdvance();
+
+  // study: a room to book, topics, the timer and flashcards
+  t = await make('study');
+  both(t, 'where', 'geisel'); both(t, 'when', 'mon'); both(t, 'length', 'h2');
+  const rm = X(t).room;
+  ck('room: Geisel slots around Monday night, two hours each', rm && rm.options.length === 3 && /Monday 7 pm to 9 pm/.test(rm.options.map((o) => o.name).join()), JSON.stringify(rm?.options));
+  t.extra('k0', 'private', 'answer', { name: 'room', ids: [rm.options[1].id] }); t.extra('k1', 'private', 'answer', { name: 'room', ids: [rm.options[1].id, rm.options[2].id] });
+  t.extra('k0', 'private', 'book', { name: 'room', id: rm.options[1].id });
+  ck('room: booked (demo) and the AI says so', X(t).room.status === 'booked' && t.chat.some((m) => /Booked \(demo\): Geisel/.test(m.text)));
+  const st = X(t).study;
+  t.extra('k1', 'list', 'take', { list: 'study', id: st.items[2].id });
+  t.extra('k0', 'timer', 'start', { mode: 'focus' });
+  t.extra('k0', 'card', 'add', { q: 'What is an eigenvector?', a: 'A vector whose direction does not change' });
+  t.extra('k1', 'card', 'know', { id: t.deck[0].id, v: 'yes' });
+  const sv = X(t).study;
+  ck('study: a topic taken, a shared 25 minute timer, and a flashcard someone knows', sv.items[2].takers[0].name === 'Dev' && sv.timer.mins === 25 && sv.timer.endsAt > Date.now() && sv.deck[0].yes === 1);
+  t.hostAdvance();
+
+  // apartment listings, moving truck
+  t = await make('housing'); both(t, 'area', 'clairemont'); both(t, 'rooms', 'singles');
+  t.extra('k0', 'heart', 'toggle', { id: 'l8' }); t.extra('k1', 'heart', 'toggle', { id: 'l8' });
+  const ls = X(t).listings;
+  ck('listings: sample apartments with rent each for singles, and both like one', ls.items.find((l) => l.id === 'l8').each === 900 && ls.items.find((l) => l.id === 'l8').hearts.length === 2);
+  t.hostAdvance();
+  t = await make('moving'); both(t, 'truck', 'uhaul');
+  t.extra('k0', 'truck', 'pick', { id: 't15' }); t.extra('k1', 'truck', 'miles', { delta: 1 });
+  const tr = X(t).truck;
+  ck('truck: a 15 ft truck at 23 miles, split two ways', tr.pick === 't15' && tr.miles === 23 && Math.abs(tr.trucks[1].total - (39.95 + 1.19 * 23 + 15)) < 0.01 && tr.trucks[1].each > 0);
+  t.hostAdvance();
+
+  // gift pool, roster, agenda, shifts, invite, reminders
+  t = await make('anniversary'); both(t, 'gift', 'flowers');
+  t.extra('k0', 'gift', 'pledge', { amount: 25 }); t.extra('k0', 'gift', 'pay', { method: 'zelle' });
+  const gv = X(t).gifts;
+  const myP = gv.pledges.find((x) => x.name === 'Maya');
+  ck('gift pool: the plan picks flowers ($50); Maya puts in $25 and pays with Zelle; AI players pledge an even share', gv.target === 50 && myP.amount === 25 && myP.paid && myP.method === 'zelle' && gv.pledges.filter((x) => x.ai).every((x) => Math.abs(x.amount - 50 / t.players.length) < 0.01) && gv.pledges.some((x) => x.ai));
+  t.hostAdvance();
+  t = await make('sports'); both(t, 'sport', 'volleyball'); both(t, 'shirts', 'buy'); both(t, 'day', 'thu');
+  t.extra('k0', 'roster', 'spot', { id: 's' }); t.extra('k1', 'roster', 'spot', { id: 's' }); t.extra('k1', 'roster', 'captain', { pcode: t.players[0].pcode }); t.extra('k1', 'roster', 'size', { size: 'M' });
+  const ro = X(t).roster;
+  ck('roster: Maya is setter (Dev cannot take it), Dev votes her captain and wears M', ro.spots.find((x) => x.id === 's').who.name === 'Maya' && ro.captain.name === 'Maya' && ro.players.find((x) => x.name === 'Dev').size === 'M' && ro.games.length === 4);
+  t.hostAdvance();
+  t = await make('meeting'); both(t, 'notes', 'rotate'); both(t, 'day', 'wed'); both(t, 'time', 't12');
+  const ag = X(t).agenda;
+  t.extra('k0', 'list', 'mins', { list: 'agenda', id: ag.items[0].id, delta: 1 });
+  ck('agenda: four items, 30 minutes, notes rotate by week, and minutes change', X(t).agenda.items[0].mins === 10 && ag.rotation.length === 4 && ag.day === 'Wednesday');
+  t.hostAdvance();
+  t = await make('volunteer'); both(t, 'where', 'foodbank'); both(t, 'when', 'sat');
+  const sh = X(t).shifts;
+  t.extra('k0', 'list', 'take', { list: 'shifts', id: sh.items[0].id }); t.extra('k0', 'list', 'take', { list: 'shifts', id: sh.items[1].id }); t.extra('k0', 'check', 'toggle', { item: 'Closed-toe shoes' });
+  const sh2 = X(t).shifts;
+  ck('shifts: food bank shifts from 9 am; one shift per person; a personal checklist', sh.from === 540 && sh2.items[0].takers.length === 0 && sh2.items[1].takers[0].name === 'Maya' && sh2.check[0].mine && sh2.check[0].done === 1);
+  t.hostAdvance();
+  t = await make('birthday'); both(t, 'what', 'karaoke'); both(t, 'when', 'fri');
+  let iv = X(t).invite;
+  ck('invite: drafted from the plan and kept secret from Sam', /Sam turns 21! Join us for a surprise karaoke, Friday night/.test(iv.text) && iv.hideFrom === 'Sam');
+  t.extra('k0', 'invite', 'guest', { name: 'Sam' }); t.extra('k0', 'invite', 'guest', { name: 'Jordan' }); t.extra('k1', 'invite', 'rsvp', { id: t.invite.guests[0].id, rsvp: 'going' });
+  iv = X(t).invite;
+  ck('invite: Sam cannot be added; Jordan is going', iv.guests.length === 1 && iv.going === 1);
+  t.extra('k0', 'reminder', 'add', { text: 'Pick up the cake', before: 180, who: 'me' });
+  ck('reminders: two for everyone, and a private one only Maya sees', X(t, 0).reminders.length === 3 && X(t, 1).reminders.length === 2);
+  ck('no codes anywhere', safe(t));
+  t.hostAdvance();
+}
+
 try {
+  await secondSet('second set');
   await boardOps('board');
   await artifacts('artifacts');
   await beach('beach house, listening', { mode: 'listen' });

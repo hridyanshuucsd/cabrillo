@@ -4,6 +4,8 @@ import { applyMessage, buildPanel, findConflict, topicOf, topicIn, isQuestion, s
 import { q, logEvent } from './db.js';
 import { answerQuestion, summarize, aiMode, playerLine, wantsCompare, menuFor, hoursFor } from './ai.js';
 import { planWhen, clock, openAt, forecast, sky, buildItinerary, BRING, OUTDOOR } from './artifacts.js';
+import { costFor, seatsFromFact, carpoolPicked, CHORES, sectionsFor, projectDates, HACK_MILESTONES, TICKETS, ROOMS, roomSlots, LISTINGS, perPerson, TRUCKS, PER_MILE, truckQuote,
+  GIFTS, ROSTER, OPPONENTS, SIZES, AGENDA, STUDY_TOPICS, SHIFTS, SHIFT_START, INVITE_TASKS, inviteText } from './extras.js';
 import { FACTS, ROLE, BILLS, firstPerson } from './facts.js';
 import { PICKUP, placeField, placeOf, placesOf, estimate, route, rideOptions, slotsFor, driver, driverStart, fieldKind, searchPlaces } from './places.js';
 
@@ -99,6 +101,14 @@ export class Table {
     this.agreements = []; this.agreeN = 0;
     this.bring = (BRING[this.task.id] || []).map((x, i) => ({ id: `b${i + 1}`, ...x, owner: null, by: 'app' })); this.bringN = this.bring.length;
     this.itin = null; this.weather = null; this.weatherOn = OUTDOOR.has(this.task.id); this.hours = {}; this.closedWarned = new Set();
+    // The second set: carpool seats, cost, invite, reminders and the scenario's own pieces (see extras.js).
+    this.cars = []; this.carN = 0; this.choreSwaps = {}; this.lists = {}; this.listKeys = {}; this.privates = {};
+    this.hearts = {}; this.truck = { pick: null, miles: 18 };
+    this.gifts = (GIFTS[this.task.id] || []).map((g, i) => ({ id: `gi${i}`, ...g, hearts: [], by: 'app' })); this.pledges = {};
+    this.roster = { spots: {}, captain: {}, sizes: {} }; this.timer = null; this.deck = []; this.deckN = 0;
+    this.invite = INVITE_TASKS.has(this.task.id) ? { text: null, guests: [], hideFrom: this.task.id === 'birthday' ? 'Sam' : '' } : null; this.guestN = 0;
+    this.reminders = [{ id: 'r1', text: 'The plan is tomorrow', before: 24 * 60, who: 'all' }, { id: 'r2', text: 'Time to head out', before: 60, who: 'all' }]; this.remN = 2;
+    this.checks = {}; this.costWarned = new Set();
     this.nextP = 1; this.nextAI = 0;
     this.players = [];
     this.forming = !!forming;
@@ -361,6 +371,7 @@ export class Table {
     }
     if (stage === 'chat') {
       this.chatStartedAt = Date.now();
+      this.refreshExtras();
       this.sys(`${this.task.prompt} Decide ${list(this.task.fields.map((f) => f.name.toLowerCase()))}. Say what you want in the chat, or tap a part of the plan above to pick. The plan locks when everyone accepts it. There is no timer.`, 'stage_intro', { stage });
       this.aiSay(this.mode === 'listen'
         ? 'Hi, I am the AI. I keep the plan board up to date and never vote. Ask me anything with @AI.'
@@ -653,12 +664,13 @@ export class Table {
     const pay = blocks.find((b) => b.type === 'pay');
     if (pay && !priv) extra.blocks = extra.blocks.filter((b) => b !== pay);
     for (const b of blocks) {
-      if (priv || !['bring', 'agree', 'weather', 'itinerary'].includes(b.type)) continue;
+      if (priv || !['bring', 'agree', 'weather', 'itinerary', 'quiz'].includes(b.type)) continue;
       extra.blocks = extra.blocks.filter((x) => x !== b);
       if (b.type === 'bring') { this.bringFromAI(b.items); extra.board = 'bring'; }
       if (b.type === 'agree') { this.agreementsFromAI(b.items); extra.board = 'agreements'; }
       if (b.type === 'weather') { this.wantWeather(null); extra.board = 'weather'; }
       if (b.type === 'itinerary') { this.refreshArtifacts(); extra.board = 'day'; }
+      if (b.type === 'quiz') { this.deckFromAI(b.items); extra.board = 'study'; }
     }
     reply(fix(a.text), 'ai_answer', { source: a.source, blocks: blocks.map((b) => b.type) }, extra);
     if (pay && !priv) this.billFromModel(pay, p);
@@ -1910,6 +1922,7 @@ export class Table {
       if (this.weather?.key !== key) this.loadWeather(place, when, key);
     }
     this.closedCheck();
+    this.refreshExtras();
   }
   async checkHours(place) {
     this.hours[place.id] = { loading: true };
@@ -2050,10 +2063,261 @@ export class Table {
     return {
       when: when ? { ...when, label: `${when.dayName}${when.minutes !== null ? ` at ${clock(when.minutes)}` : ''}`, dateLabel: when.date } : null,
       placeName: place?.name || null, placeId: place?.id || null, hours, itin, weather, weatherOn: this.weatherOn,
-      agreements: this.agreements.map((x) => ({ id: x.id, text: x.text, byName: name(x.by), byAI: x.by === 'AI', stamps: x.stamps.map((c) => ({ name: name(c), seat: seat(c), you: me && c === me.pcode })), mine: !!me && x.stamps.includes(me.pcode) })),
+      agreements: this.agreements.map((x) => ({ id: x.id, text: x.text, byName: name(x.by), byAI: x.by === 'AI', fromPlan: !!x.field, stamps: x.stamps.map((c) => ({ name: name(c), seat: seat(c), you: me && c === me.pcode })), mine: !!me && x.stamps.includes(me.pcode) })),
       people: this.humans().length,
       bring: this.bring.map((x) => ({ id: x.id, cat: x.cat, name: x.name, owner: x.owner ? name(x.owner) : null, seat: x.owner ? seat(x.owner) : null, mine: !!me && x.owner === me.pcode, byAI: x.by === 'AI' }))
     };
+  }
+
+  // ---------- the second set of board artifacts ----------
+  // Keeps the scenario's own pieces in step with where the plan is heading. AI players take part where a person
+  // would: they take a seat in a car, offer to drive if they have a car, and answer private questions by their limit.
+  refreshExtras() {
+    const { h } = this.aim();
+    // carpool: AI players with a car offer to drive; the others take a free seat
+    if (carpoolPicked(h)) {
+      // an AI player with a car offers to drive only while there are not enough free seats for everyone without one
+      for (const p of this.players.filter((x) => x.isAI && !this.carOf(x.pcode))) {
+        const need = this.players.filter((x) => !this.carOf(x.pcode)).length;
+        const free = this.cars.reduce((a, c) => a + c.seats - c.riders.length, 0);
+        const seats = seatsFromFact(this.factsOf(p).find((f) => f.id === 'car' && !f.private)?.text);
+        if (seats > 0 && free < need - 1) { this.cars.push({ id: `c${++this.carN}`, driver: p.pcode, seats, riders: [] }); this.note(`${p.short} (AI) offered to drive (${seats} seats)`); }
+      }
+      for (const p of this.players.filter((x) => x.isAI && !this.carOf(x.pcode))) {
+        const car = this.cars.find((c) => c.riders.length < c.seats);
+        if (car) { car.riders.push(p.pcode); this.note(`${p.short} (AI) took a seat with ${this.nameOf(this.byCode(car.driver))}`); }
+      }
+    }
+    // work split, agenda, study topics and shifts: lists rebuilt when the part they come from changes
+    const sec = sectionsFor(this.task.id, h);
+    if (sec) this.ensureList('work', sec.key, () => sec.items.map((t) => ({ title: t, cap: sec.cap })));
+    if (this.task.id === 'meeting') this.ensureList('agenda', 'a', () => AGENDA.map(([t, m]) => ({ title: t, mins: m, cap: 1 })));
+    if (this.task.id === 'study') this.ensureList('study', 's', () => STUDY_TOPICS.map((t) => ({ title: t, cap: 1 })));
+    if (this.task.id === 'volunteer' && h.where) {
+      const st = SHIFT_START[h.when] ?? 10 * 60;
+      this.ensureList('shifts', `${h.where}|${st}`, () => SHIFTS[h.where].jobs.map(([t, off, len]) => ({ title: t, start: st + off * 60, len: len * 60, cap: 2 })));
+    }
+    // private questions: tickets for the show, and time slots for a room that can be booked
+    if (this.task.id === 'concert' && h.show) this.ensurePrivate('tickets', h.show, () => TICKETS[h.show].map((t) => ({ id: t.id, name: t.name, price: t.price, ga: !!t.ga })));
+    const room = ROOMS[this.task.id];
+    if (room && h[room.field] === room.option) { const slots = roomSlots(this.task, h); this.ensurePrivate('room', JSON.stringify(slots.map((x) => x.id)), () => slots); }
+    // roommates: every settled part of the plan becomes a house rule that people sign
+    if (this.task.id === 'roommates') {
+      for (const f of this.task.fields) {
+        const x = this.agreements.find((y) => y.field === f.id);
+        const text = this.plan[f.id] ? `${f.name}: ${optionName(this.task, f.id, this.plan[f.id])}` : null;
+        if (text && !x) this.agreements.push({ id: `g${++this.agreeN}`, text, by: 'AI', stamps: [], field: f.id });
+        else if (x && text && x.text !== text) { x.text = text; x.stamps = []; }
+        else if (x && !text) this.agreements = this.agreements.filter((y) => y !== x);
+      }
+    }
+    // the invite follows the plan until someone edits it
+    if (this.invite && !this.invite.edited) this.invite.text = inviteText(this.task, this.headingNames(h));
+    this.costCheck();
+  }
+  headingNames(h) { return Object.fromEntries(this.task.fields.filter((f) => h[f.id]).map((f) => [f.id, optionName(this.task, f.id, h[f.id])])); }
+  ensureList(name, key, make) {
+    if (this.listKeys[name] === key) return;
+    this.listKeys[name] = key;
+    this.lists[name] = make().map((x, i) => ({ id: `${name}${i + 1}`, takers: [], status: 'todo', ...x }));
+  }
+  ensurePrivate(name, key, make) {
+    if (this.privates[name]?.key === key) return;
+    const options = make();
+    if (!options.length) { delete this.privates[name]; return; }
+    this.privates[name] = { key, options, answers: {}, status: 'asking', choice: null, code: null };
+    // AI players answer at once, by what they can spend
+    for (const p of this.players.filter((x) => x.isAI)) { const max = this.limitOf(p).maxPerPerson; this.privates[name].answers[p.pcode] = options.filter((o) => !max || !o.price || o.price <= max).map((o) => o.id); }
+  }
+  carOf(pcode) { return this.cars.find((c) => c.driver === pcode || c.riders.includes(pcode)); }
+  // Listening tables: one heads-up when the plan costs more per person than the budget the group agreed on.
+  costCheck() {
+    if (!this.listening() || this.stage !== 'chat' || this.deal) return;
+    const c = costFor(this.task, this.plan, this.players.length);
+    const b = c?.budget;
+    if (!b || b.total || b.hi === null || c.total <= b.hi) return;
+    const key = `${this.planKey}`;
+    if (this.costWarned.has(key) || Date.now() - this.lastAiSayAt < sec(6)) return;
+    this.costWarned.add(key);
+    this.aiSay(`Heads up: by this game's prices, the plan comes to about $${Math.round(c.total)} each, more than the budget you agreed on (${b.name}).`, 'cost_heads_up', { total: c.total, budget: b.name }, false, null, { board: 'cost' });
+  }
+
+  // One entry point for every action on the second set. kind names the piece; a holds the details.
+  extra(key, kind, action, a = {}) {
+    const p = this.player(key);
+    if (!p || p.isAI || this.stage === 'done' || (this.deal && kind !== 'reminder')) return;
+    const me = p.pcode, nm = p.name;
+    const str = (x, n) => String(x ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+    let did = null;
+    if (kind === 'car') {
+      const car = this.cars.find((c) => c.id === a.id);
+      if (action === 'drive' && !this.cars.some((c) => c.driver === me)) {
+        const mine = this.carOf(me); if (mine) mine.riders = mine.riders.filter((c) => c !== me);
+        const seats = Math.max(1, Math.min(6, Number(a.seats) || seatsFromFact(this.factsOf(p).find((f) => f.id === 'car')?.text) || 3));
+        this.cars.push({ id: `c${++this.carN}`, driver: me, seats, riders: [] }); did = `${nm} can drive (${seats} seats)`;
+      } else if (action === 'seats' && car?.driver === me) { car.seats = Math.max(car.riders.length, 1, Math.min(6, car.seats + (Number(a.delta) > 0 ? 1 : -1))); did = `${nm} has ${car.seats} seats`; }
+      else if (action === 'stop' && car?.driver === me) { this.cars = this.cars.filter((c) => c !== car); did = `${nm} is no longer driving`; this.refreshExtras(); }
+      else if (action === 'ride' && car && car.driver !== me && car.riders.length < car.seats && !car.riders.includes(me)) {
+        const mine = this.carOf(me); if (mine?.driver === me) return; if (mine) mine.riders = mine.riders.filter((c) => c !== me);
+        car.riders.push(me); did = `${nm} rides with ${this.nameOf(this.byCode(car.driver))}`;
+      } else if (action === 'leave' && car?.riders.includes(me)) { car.riders = car.riders.filter((c) => c !== me); did = `${nm} left ${this.nameOf(this.byCode(car.driver))}'s car`; }
+    } else if (kind === 'chore') {
+      const w = Number(a.week), x = Number(a.a), y = Number(a.b);
+      if (![w, x, y].every(Number.isInteger) || w < 0 || w > 3 || x === y || [x, y].some((c) => c < 0 || c >= CHORES.length)) return;
+      const ox = this.choreOwner(w, x), oy = this.choreOwner(w, y);
+      if (ox !== me && oy !== me) return;
+      this.choreSwaps[`${w}|${x}`] = oy; this.choreSwaps[`${w}|${y}`] = ox;
+      did = `${nm} traded chores in week ${w + 1}: ${CHORES[x]} and ${CHORES[y]}`;
+    } else if (kind === 'list') {
+      const list = this.lists[a.list]; if (!list) return;
+      const it = list.find((x) => x.id === a.id);
+      if (action === 'take' && it) {
+        if (it.takers.includes(me)) { it.takers = it.takers.filter((c) => c !== me); did = `${nm} let go of ${it.title}`; }
+        else if (it.takers.length < it.cap) { if (a.list === 'shifts' || it.cap === 1 && a.list === 'roster') list.forEach((y) => { y.takers = y.takers.filter((c) => c !== me); }); it.takers.push(me); did = `${nm} took ${it.title}`; }
+      } else if (action === 'status' && it) { it.status = { todo: 'doing', doing: 'done', done: 'todo' }[it.status]; did = `${it.title}: ${it.status === 'doing' ? 'in progress' : it.status === 'done' ? 'done' : 'to do'}`; }
+      else if (action === 'mins' && it && it.mins !== undefined) { it.mins = Math.max(5, Math.min(60, it.mins + (Number(a.delta) > 0 ? 5 : -5))); did = `${it.title}: ${it.mins} min`; }
+      else if (action === 'add') { const t = str(a.title, 60); if (t.length < 2 || list.length >= 12) return; const cap = list[0]?.cap || 1; list.push({ id: `${a.list}x${Date.now().toString(36)}`, title: t, takers: [], status: 'todo', cap, ...(a.list === 'agenda' ? { mins: 5 } : {}), ...(a.list === 'shifts' ? { start: list[0].start, len: 120, cap: 2 } : {}) }); did = `${nm} added ${t}`; }
+      else if (action === 'remove' && it && !it.takers.length) { this.lists[a.list] = list.filter((x) => x !== it); did = `${nm} removed ${it.title}`; }
+    } else if (kind === 'private') {
+      const pr = this.privates[a.name]; if (!pr) return;
+      if (action === 'answer' && pr.status === 'asking') { pr.answers[me] = [...new Set((Array.isArray(a.ids) ? a.ids : []).map(String))].filter((x) => pr.options.some((o) => o.id === x)); did = null; this.log(me, 'private_answer', { name: a.name, ok: pr.answers[me] }); }
+      else if (action === 'book' && pr.status === 'asking') {
+        const common = this.privateCommon(pr); const o = common.find((x) => x.id === a.id); if (!o) return;
+        pr.status = 'booked'; pr.choice = o.id; pr.code = `DEMO-${crypto.randomBytes(2).toString('hex').toUpperCase()}`; pr.by = me;
+        did = `${nm} booked ${o.name} (demo)`;
+        if (a.name === 'tickets') this.postBill({ title: `${o.name} tickets: who owes ${this.nameOf(p)}`, rows: this.players.filter((x) => x !== p).map((x) => ({ pcode: x.pcode, amount: o.price, to: me, note: o.name })), method: null, notes: [`${this.nameOf(p)} bought ${this.players.length} tickets (demo, nothing was charged).`], source: 'tickets', auto: false, by: me });
+        else this.aiSay(`Booked (demo): ${ROOMS[this.task.id].name}, ${o.name}. Confirmation ${pr.code}. It was a time that works for everyone; nobody's answer is shown.`, 'room_booked', { slot: o.id, code: pr.code }, true);
+      } else if (action === 'reopen' && pr.status === 'booked') { pr.status = 'asking'; pr.choice = null; did = `${nm} reopened the ${a.name === 'tickets' ? 'tickets' : 'room'}`; }
+    } else if (kind === 'heart') {
+      const l = LISTINGS.find((x) => x.id === a.id); if (!l) return;
+      const set = new Set(this.hearts[l.id] || []); if (set.has(me)) set.delete(me); else set.add(me);
+      this.hearts[l.id] = [...set]; did = `${nm} ${set.has(me) ? 'likes' : 'no longer likes'} ${l.name}`;
+    } else if (kind === 'truck') {
+      if (action === 'pick' && (TRUCKS.some((t) => t.id === a.id) || a.id === 'movers')) { this.truck.pick = this.truck.pick === a.id ? null : a.id; did = `${nm} picked the ${a.id === 'movers' ? 'movers' : TRUCKS.find((t) => t.id === a.id).name}`; }
+      else if (action === 'miles') { this.truck.miles = Math.max(5, Math.min(200, this.truck.miles + (Number(a.delta) > 0 ? 5 : -5))); did = `${nm} set the miles to ${this.truck.miles}`; }
+    } else if (kind === 'gift') {
+      const g = this.gifts.find((x) => x.id === a.id);
+      if (action === 'heart' && g) { g.hearts = g.hearts.includes(me) ? g.hearts.filter((c) => c !== me) : [...g.hearts, me]; did = `${nm} ${g.hearts.includes(me) ? 'likes' : 'no longer likes'} ${g.name}`; }
+      else if (action === 'add') { const n = str(a.name, 50), price = Math.round(Number(a.price)); if (n.length < 2 || !(price > 0 && price < 2000) || this.gifts.length >= 8) return; this.gifts.push({ id: `gi${this.gifts.length}x`, name: n, price, hearts: [me], by: me }); did = `${nm} suggested ${n} ($${price})`; }
+      else if (action === 'pledge') {
+        const amt = Math.round(Number(a.amount) * 100) / 100; if (!(amt >= 0 && amt <= 1000)) return;
+        this.pledges[me] = { amount: amt, paid: false, method: null }; did = `${nm} put in $${amt}`;
+        // AI players chip in an even share once someone starts the pool, and pay a moment later, like a person would
+        const g = this.gifts.find((x) => this.task.id === 'anniversary' && x.option === this.aim().h.gift) || [...this.gifts].sort((x, y) => y.hearts.length - x.hearts.length)[0];
+        const even = Math.round((g.price / this.players.length) * 100) / 100;
+        for (const x of this.players.filter((y) => y.isAI && !this.pledges[y.pcode])) {
+          this.pledges[x.pcode] = { amount: even, paid: false, method: null };
+          this.later(rand(3, 7), () => { if (this.pledges[x.pcode] && !this.pledges[x.pcode].paid) { this.pledges[x.pcode].paid = true; this.pledges[x.pcode].method = 'venmo'; this.note(`${x.short} (AI) paid $${even} with Venmo (demo)`); this.broadcast(); } });
+        }
+      }
+      else if (action === 'pay' && this.pledges[me] && !this.pledges[me].paid) { this.pledges[me].paid = true; this.pledges[me].method = ['venmo', 'zelle'].includes(a.method) ? a.method : 'venmo'; did = `${nm} paid $${this.pledges[me].amount} with ${this.pledges[me].method === 'zelle' ? 'Zelle' : 'Venmo'} (demo)`; }
+    } else if (kind === 'roster') {
+      const r = this.roster, sport = this.aim().h.sport;
+      if (action === 'spot' && sport && ROSTER[sport].spots.some(([id]) => id === a.id)) {
+        if (r.spots[a.id] === me) { delete r.spots[a.id]; did = `${nm} left a spot`; }
+        else if (!r.spots[a.id]) { for (const k of Object.keys(r.spots)) if (r.spots[k] === me) delete r.spots[k]; r.spots[a.id] = me; did = `${nm} plays ${ROSTER[sport].spots.find(([id]) => id === a.id)[1].toLowerCase()}`; }
+      } else if (action === 'captain' && this.byCode(a.pcode)) { r.captain[me] = r.captain[me] === a.pcode ? null : a.pcode; did = `${nm} ${r.captain[me] ? 'voted for a captain' : 'took back a captain vote'}`; }
+      else if (action === 'size' && SIZES.includes(a.size)) { r.sizes[me] = r.sizes[me] === a.size ? null : a.size; did = `${nm} wears ${a.size}`; }
+    } else if (kind === 'timer') {
+      if (action === 'start') { const mode = a.mode === 'break' ? 'break' : 'focus'; const mins = mode === 'break' ? 5 : 25; this.timer = { mode, mins, endsAt: Date.now() + mins * 60000, by: me }; did = `${nm} started a ${mins} minute ${mode === 'break' ? 'break' : 'focus block'}`; }
+      else if (action === 'stop' && this.timer) { this.timer = null; did = `${nm} stopped the timer`; }
+    } else if (kind === 'card') {
+      const c = this.deck.find((x) => x.id === a.id);
+      if (action === 'add') { const q = str(a.q, 160), ans = str(a.a, 160); if (q.length < 3 || !ans || this.deck.length >= 40) return; this.deck.push({ id: `q${++this.deckN}`, q, a: ans, by: me, knows: {} }); did = `${nm} added a flashcard`; }
+      else if (action === 'know' && c) { c.knows[me] = a.v === 'yes' ? 'yes' : a.v === 'no' ? 'no' : undefined; this.log(me, 'flashcard', { id: c.id, v: c.knows[me] || null }); this.broadcast(); return; }
+      else if (action === 'remove' && c) { this.deck = this.deck.filter((x) => x !== c); did = `${nm} removed a flashcard`; }
+    } else if (kind === 'invite' && this.invite) {
+      const g = this.invite.guests.find((x) => x.id === a.id);
+      if (action === 'text') { const t = str(a.text, 400); if (t.length < 5) return; this.invite.text = t; this.invite.edited = true; did = `${nm} edited the invite`; }
+      else if (action === 'reset') { this.invite.edited = false; this.refreshExtras(); did = `${nm} reset the invite to the plan`; }
+      else if (action === 'guest') { const n = str(a.name, 40); if (n.length < 2 || this.invite.guests.length >= 40) return; if (this.invite.hideFrom && n.toLowerCase() === this.invite.hideFrom.toLowerCase()) return; this.invite.guests.push({ id: `v${++this.guestN}`, name: n, rsvp: null }); did = `${nm} invited ${n}`; }
+      else if (action === 'rsvp' && g) { g.rsvp = ['going', 'maybe', 'no'].includes(a.rsvp) && g.rsvp !== a.rsvp ? a.rsvp : null; did = `${g.name}: ${g.rsvp || 'no answer yet'}`; }
+      else if (action === 'remove' && g) { this.invite.guests = this.invite.guests.filter((x) => x !== g); did = `${nm} removed ${g.name}`; }
+    } else if (kind === 'reminder') {
+      if (action === 'add') { const t = str(a.text, 80), before = Math.max(5, Math.min(7 * 1440, Number(a.before) || 60)); if (t.length < 2 || this.reminders.length >= 10) return; this.reminders.push({ id: `r${++this.remN}`, text: t, before, who: a.who === 'me' ? me : 'all' }); did = `${nm} added a reminder: ${t}`; }
+      else if (action === 'remove') { const r = this.reminders.find((x) => x.id === a.id); if (!r || (r.who !== 'all' && r.who !== me)) return; this.reminders = this.reminders.filter((x) => x !== r); did = `${nm} removed a reminder`; }
+    } else if (kind === 'check') {
+      const items = SHIFTS[this.aim().h.where]?.check || []; if (!items.includes(a.item)) return;
+      const c = (this.checks[me] = this.checks[me] || {}); c[a.item] = !c[a.item]; this.log(me, 'checklist', { item: a.item, on: c[a.item] }); this.broadcast(); return;
+    } else return;
+    if (did) { this.note(did); this.log(me, `x_${kind}`, { action, ...a }); }
+    this.broadcast();
+  }
+  choreOwner(w, c) { const o = this.choreSwaps[`${w}|${c}`]; return o && this.byCode(o) ? o : this.players[(c + w) % this.players.length]?.pcode; }
+  privateCommon(pr) { const all = this.players.map((x) => pr.answers[x.pcode]).filter(Boolean); return all.length < this.players.length ? [] : pr.options.filter((o) => all.every((a) => a.includes(o.id))); }
+  // The AI can fill the flashcard deck from a question ("@AI quiz us on eigenvalues").
+  deckFromAI(items) { for (const x of items) if (this.deck.length < 40) this.deck.push({ id: `q${++this.deckN}`, q: x.q, a: x.a, by: 'AI', knows: {} }); this.note(`The AI added ${items.length} flashcard${items.length === 1 ? '' : 's'}`); }
+
+  extrasView(me) {
+    const name = (c) => (c === 'AI' ? 'AI' : this.nameOf(this.byCode(c)) || c);
+    const who = (c) => ({ name: name(c), color: this.byCode(c)?.color || null, you: !!me && c === me.pcode, ai: !!this.byCode(c)?.isAI });
+    const { h } = this.aim();
+    const n = this.players.length;
+    const v = {};
+    const cost = costFor(this.task, h, n);
+    if (cost) v.cost = { ...cost, people: n, agreedBudget: !!this.plan[this.task.fields.find((f) => /budget|rent/.test(f.id))?.id] };
+    if (carpoolPicked(h)) {
+      const mine = me ? this.factsOf(me).find((f) => f.id === 'car') : null;
+      v.cars = { list: this.cars.map((c) => ({ id: c.id, seats: c.seats, driver: who(c.driver), riders: c.riders.map(who), mine: !!me && c.driver === me.pcode, inIt: !!me && c.riders.includes(me.pcode) })),
+        without: this.players.filter((x) => !this.carOf(x.pcode)).map((x) => who(x.pcode)), mySeats: mine ? seatsFromFact(mine.text) : 0 };
+    }
+    if (this.task.id === 'roommates' && !['own', 'cleaner'].includes(h.clean)) {
+      v.chores = { chores: CHORES, weeks: [0, 1, 2, 3].map((w) => CHORES.map((_, c) => who(this.choreOwner(w, c)))) };
+    }
+    if (this.task.id === 'roommates' && h.clean) v.cleanNote = { own: 'Everyone cleans their own mess, so there is no chore chart.', cleaner: 'A cleaner comes, so there is no chore chart.' }[h.clean] || null;
+    const listView = (name) => this.lists[name]?.map((x) => ({ ...x, takers: x.takers.map(who), mine: !!me && x.takers.includes(me.pcode) }));
+    if (this.lists.work) {
+      const dates = this.task.id === 'project' ? projectDates(h) : null;
+      v.work = { items: listView('work'), cap: this.lists.work[0]?.cap || 1, hack: this.task.id === 'hackathon',
+        dates: dates && { draft: dates.draft && { label: `Draft, ${dates.draft.dayName}`, days: dates.draft.daysAway, date: dates.draft.date }, final: dates.final && { label: `Final, ${dates.final.dayName}`, days: dates.final.daysAway, date: dates.final.date } },
+        milestones: this.task.id === 'hackathon' ? HACK_MILESTONES.map(([hr, label]) => ({ hr, label, at: clock((10 * 60 + hr * 60) % 1440) })) : null };
+    }
+    if (this.lists.agenda) {
+      const notes = h.notes;
+      v.agenda = { items: listView('agenda'), budget: 30, notes,
+        rotation: notes === 'rotate' ? [0, 1, 2, 3].map((w) => who(this.players[w % n]?.pcode)) : null,
+        day: h.day ? optionName(this.task, 'day', h.day) : null, time: h.time ? optionName(this.task, 'time', h.time) : null, format: h.format || null };
+    }
+    if (this.lists.study) v.study = { items: listView('study'), timer: this.timer && { ...this.timer, by: name(this.timer.by) }, deck: this.deck.map((c) => ({ id: c.id, q: c.q, a: c.a, by: name(c.by), mine: me ? c.knows[me.pcode] || null : null, yes: Object.values(c.knows).filter((x) => x === 'yes').length, no: Object.values(c.knows).filter((x) => x === 'no').length })) };
+    if (this.lists.shifts && h.where) {
+      const items = listView('shifts');
+      v.shifts = { items, from: Math.min(...items.map((x) => x.start)), to: Math.max(...items.map((x) => x.start + x.len)), place: optionName(this.task, 'where', h.where),
+        check: SHIFTS[h.where].check.map((t) => ({ text: t, mine: !!(me && this.checks[me.pcode]?.[t]), done: this.humans().filter((x) => this.checks[x.pcode]?.[t]).length })), people: this.humans().length };
+    }
+    for (const [k, pr] of Object.entries(this.privates)) {
+      const answered = this.players.filter((x) => pr.answers[x.pcode]).length;
+      const common = answered === n ? this.privateCommon(pr).map((o) => o.id) : null;
+      v[k === 'tickets' ? 'tickets' : 'room'] = { name: k, options: pr.options, mine: me ? pr.answers[me.pcode] ?? null : null, answered, of: n, common, status: pr.status, choice: pr.choice, code: pr.code,
+        title: k === 'tickets' ? optionName(this.task, 'show', h.show) : ROOMS[this.task.id].name, by: pr.by ? name(pr.by) : null };
+    }
+    if (this.task.id === 'housing') {
+      v.listings = { rooms: h.rooms || 'singles', area: h.area || null, maxRent: { r900: 900, r1300: 1300, r1600: null }[h.rent] ?? null, lease: h.lease || null, origin: PICKUP,
+        items: LISTINGS.map((l) => ({ ...l, each: perPerson(l, h.rooms || 'singles'), hearts: (this.hearts[l.id] || []).map(who), mine: !!me && (this.hearts[l.id] || []).includes(me.pcode) })) };
+    }
+    if (this.task.id === 'moving') {
+      v.truck = { pick: this.truck.pick, miles: this.truck.miles, perMile: PER_MILE, people: n, plan: h.truck || null, start: h.start ? optionName(this.task, 'start', h.start) : null, thanks: h.thanks || null,
+        trucks: TRUCKS.map((t) => ({ ...t, ...truckQuote(t, this.truck.miles, n) })), movers: { total: 400, each: Math.round((400 / n) * 100) / 100 } };
+    }
+    if (this.gifts.length && (this.task.id !== 'birthday' || h.gift === 'group' || !h.gift)) {
+      const lead = (this.task.id === 'anniversary' && h.gift && this.gifts.find((g) => g.option === h.gift)) || [...this.gifts].sort((a, b) => b.hearts.length - a.hearts.length)[0];
+      const target = lead.price;
+      v.gifts = { items: this.gifts.map((g) => ({ ...g, hearts: g.hearts.map(who), mine: !!me && g.hearts.includes(me.pcode), lead: g === lead })), target, lead: lead.name, even: Math.round((target / n) * 100) / 100,
+        pledges: Object.entries(this.pledges).map(([c, x]) => ({ ...who(c), ...x })), mine: me ? this.pledges[me.pcode] || null : null,
+        raised: Object.values(this.pledges).reduce((a, x) => a + x.amount, 0), paid: Object.values(this.pledges).filter((x) => x.paid).reduce((a, x) => a + x.amount, 0) };
+    }
+    if (this.task.id === 'sports') {
+      const sport = h.sport || null, r = this.roster;
+      const votes = {}; for (const c of Object.values(r.captain)) if (c) votes[c] = (votes[c] || 0) + 1;
+      const top = Object.entries(votes).sort((a, b) => b[1] - a[1])[0];
+      v.roster = { sport, sportName: sport ? optionName(this.task, 'sport', sport) : null, surface: sport ? ROSTER[sport].surface : null,
+        spots: sport ? ROSTER[sport].spots.map(([id, label, x, y]) => ({ id, label, x, y, who: r.spots[id] ? who(r.spots[id]) : null })) : [],
+        players: this.players.map((x) => ({ ...who(x.pcode), pcode: x.pcode, votes: votes[x.pcode] || 0, size: r.sizes[x.pcode] || null })), myVote: me ? r.captain[me.pcode] || null : null,
+        captain: top ? who(top[0]) : null, sizes: h.shirts === 'buy' ? SIZES : null, mySize: me ? r.sizes[me.pcode] || null : null,
+        games: h.day ? OPPONENTS.map((o, i) => ({ vs: o, week: i + 1, when: `${optionName(this.task, 'day', h.day)}${h.time ? ` ${optionName(this.task, 'time', h.time).toLowerCase()}` : ''}` })) : null };
+    }
+    if (this.invite) v.invite = { ...this.invite, guests: this.invite.guests, going: this.invite.guests.filter((g) => g.rsvp === 'going').length, maybe: this.invite.guests.filter((g) => g.rsvp === 'maybe').length, no: this.invite.guests.filter((g) => g.rsvp === 'no').length };
+    v.reminders = this.reminders.filter((r) => r.who === 'all' || (me && r.who === me.pcode)).map((r) => ({ ...r, mine: r.who !== 'all' }));
+    return v;
   }
 
   // Everything the board shows that is not already in the panel: availability, places, tasks, menus, history.
@@ -2075,7 +2339,7 @@ export class Table {
       mine: me ? m.orders[me.pcode] || {} : {},
       orders: Object.entries(m.orders).map(([c, items]) => ({ name: name(c), you: me && c === me.pcode, items: Object.entries(items).map(([i, q]) => ({ name: m.items.find((x) => x.id === i)?.name, qty: q, price: m.items.find((x) => x.id === i)?.price || 0 })) })) }]));
     return { avail, places, origin: PICKUP, placeField: placeField(this.task), todos: this.todos.map((t) => ({ ...t, ownerName: t.owner ? name(t.owner) : null, mine: me && t.owner === me.pcode, byName: t.by === 'AI' ? 'AI' : name(t.by) })),
-      menus, history: this.history.slice(-40).map((h) => ({ ...h, text: h.text })), changes: this.history.length, summary: this.mode === 'listen' ? null : this.hearingRule(), ...this.artifactsView(me) };
+      menus, history: this.history.slice(-40).map((h) => ({ ...h, text: h.text })), changes: this.history.length, summary: this.mode === 'listen' ? null : this.hearingRule(), ...this.artifactsView(me), x: this.extrasView(me) };
   }
 
   // The chat as one person sees it. "Me too" under a message is offered only where it adds a pick for this person:

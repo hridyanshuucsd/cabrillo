@@ -194,6 +194,7 @@ io.on('connection', (socket) => {
   socket.on('game:bring', ({ sessionId, action, ...a }) => table(sessionId)?.bringItem(id.key, String(action), a));
   socket.on('game:day', ({ sessionId, action, ...a }) => table(sessionId)?.itinerary(id.key, String(action), a));
   socket.on('game:weather', ({ sessionId }) => table(sessionId)?.wantWeather(id.key));
+  socket.on('game:x', ({ sessionId, kind, action, ...a }) => table(sessionId)?.extra(id.key, String(kind), String(action), a));
   socket.on('game:menu', safe(async ({ sessionId, placeId }, cb) => ack(cb, (await table(sessionId)?.openMenu(id.key, String(placeId))) || { error: 'Not available.' })));
   socket.on('game:order', ({ sessionId, placeId, itemId, delta }) => table(sessionId)?.order(id.key, String(placeId), String(itemId), delta));
   socket.on('game:menu-bill', ({ sessionId, placeId }) => table(sessionId)?.menuBill(id.key, String(placeId)));

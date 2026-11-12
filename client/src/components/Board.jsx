@@ -3,6 +3,7 @@ import { emit } from '../lib.js';
 import MapView, { gmapsDirections, gmapsPlace } from './MapView.jsx';
 import { MapCard, RideCard, TableCard, BillCard } from './Cards.jsx';
 import { OpeningHours, Itinerary, Weather, Bring, Agreements, Ticket } from './Artifacts.jsx';
+import { Cost, Cars, Chores, Work, PrivatePick, Listings, Truck, Gifts, Roster, Agenda, Study, Shifts, Invite, Reminders } from './Extras.jsx';
 
 // The plan board: one live view of the whole plan that everyone at the table can use. It sits beside the chat on a
 // wide screen and opens as a sheet on a phone. Each part of the plan gets the widget that fits it: an availability
@@ -259,6 +260,8 @@ export default function PlanBoard({ g, send, onAccept, onClose }) {
   const listen = g.mode === 'listen';
   const paused = !!g.pausedBy;
   const b = g.board || {};
+  const x = b.x || {};
+  const act = (kind, action, a) => send('game:x', { kind, action, ...a });
   const openMenu = async (placeId) => { await emit('game:menu', { sessionId: g.id, placeId }); setTimeout(() => document.getElementById(`menu-${placeId}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 150); };
   // Cards the AI made, newest first: rides, tables, bills, maps and routes.
   const cards = [...g.chat].reverse().filter((m) => ['booking', 'bill'].includes(m.kind) || (m.kind === 'map' && (g.maps || []).find((x) => x.id === m.mapId)?.kind === 'route'));
@@ -296,8 +299,23 @@ export default function PlanBoard({ g, send, onAccept, onClose }) {
       <Weather g={g} send={send} />
       <OpeningHours g={g} />
       <Itinerary g={g} send={send} />
+      <Cost x={x} />
+      <Cars x={x} act={act} deal={!!g.deal} />
+      <Chores x={x} act={act} deal={!!g.deal} />
+      <Work x={x} act={act} deal={!!g.deal} />
+      <Agenda g={g} x={x} act={act} deal={!!g.deal} />
+      <Study x={x} act={act} deal={!!g.deal} />
+      <Shifts x={x} act={act} deal={!!g.deal} />
+      <Roster x={x} act={act} deal={!!g.deal} />
+      <Listings x={x} act={act} deal={!!g.deal} />
+      <Truck x={x} act={act} deal={!!g.deal} />
+      <PrivatePick p={x.tickets} act={act} deal={!!g.deal} kind="tickets" />
+      <PrivatePick p={x.room} act={act} deal={!!g.deal} kind="room" />
+      <Gifts x={x} act={act} deal={!!g.deal} />
       <Bring g={g} send={send} />
       <Agreements g={g} send={send} />
+      <Invite x={x} act={act} deal={!!g.deal} />
+      <Reminders g={g} x={x} act={act} />
       {Object.entries(b.menus || {}).map(([id, m]) => <MenuCard key={id} g={g} send={send} id={id} m={m} />)}
       {cards.length > 0 && <div className="label" style={{ marginTop: 6 }}>Cards</div>}
       {cards.map((m) => {

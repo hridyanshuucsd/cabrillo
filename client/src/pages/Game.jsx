@@ -10,7 +10,7 @@ import { emit as emitAck } from '../lib.js';
 // Chat (no timer; the plan locks when everyone accepts it), and Results.
 const STATUS = { open: 'Open', split: 'Undecided', leaning: 'Leaning', agreed: 'Most agree' };
 // Buttons under an AI message that lead to the part of the board it changed.
-const BOARD_LINKS = { tasks: ['part-tasks', 'See the to-do list'], bring: ['part-bring', 'See who brings what'], agreements: ['part-agreements', 'See the agreements'], weather: ['part-weather', 'See the forecast'], day: ['part-day', 'See the day'], hours: ['part-hours', 'See opening hours'] };
+const BOARD_LINKS = { tasks: ['part-tasks', 'See the to-do list'], bring: ['part-bring', 'See who brings what'], agreements: ['part-agreements', 'See the agreements'], weather: ['part-weather', 'See the forecast'], day: ['part-day', 'See the day'], hours: ['part-hours', 'See opening hours'], cost: ['part-x-cost', 'See the cost'], study: ['part-x-study', 'See the flashcards'] };
 // "Kai: Bus or trolley": who goes their own way for a part where people may differ (Getting there).
 const ownText = (own) => (own.length > 2 ? `${own.length} go their own way` : own.map((x) => `${x.name}: ${x.optionName}`).join(', '));
 // What a person knows about their own situation (fine to share), and what everyone knows about the scenario.
