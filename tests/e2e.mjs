@@ -63,7 +63,7 @@ try {
 
   // ---------- briefing: task, private limit (keep, swap, or write your own), how the chat works ----------
   await a.getByText('Step 1 of 3').waitFor();
-  check('briefing step 1 explains the task and what to decide', /Agree on one outing/.test(await body(a)) && /La Jolla Cove · Balboa Park/.test(await body(a)));
+  check('briefing step 1 explains the task and what to decide', /Agree on one outing/.test(await body(a)) && /Along the way you will settle/i.test(await body(a)) && /One person starts the chat/.test(await body(a)));
   await shot(a, '01_briefing_task');
   await a.getByRole('button', { name: 'Next: your private limit' }).click();
   const dealt = await a.locator('.limit-body').innerText();
@@ -99,12 +99,14 @@ try {
   check('private limits differ within a table', new Set([limits.Maya, limits.Dev, limits.Priya]).size === 3);
 
   // which table has which AI
-  const isListen = async (p) => (await p.locator('.hearing').count()) > 0;
+  const isListen = async (p) => (await p.locator('.ai-status:not(.plain)').count()) > 0;
   const listenFirst = await isListen(a);
   const [L, A] = listenFirst ? [[a, b, c], [d, e, f]] : [[d, e, f], [a, b, c]];
   const Ln = listenFirst ? ['Maya', 'Dev', 'Priya'] : ['Jordan', 'Lena', 'Omar'];
   check('one table has the listening AI and the other the answer-only AI', (await isListen(L[0])) && !(await isListen(A[0])));
-  check('the chat has no timer', !(await L[0].locator('.timer-pill, [role=timer]').count()) && /There is no timer/.test(await body(L[0])));
+  check('the chat has no timer', !(await L[0].locator('.timer-pill, [role=timer]').count()));
+  check('a person starts the chat, and the AI does not open with a greeting', /starts the chat\./.test(await body(L[0])) && !(await L[0].locator('.bubble.ai').count()));
+  check('the plan strip starts empty and fills in as people talk', (await L[0].locator('.pchip:not(.more)').count()) === 0 && /more to decide/.test(await L[0].locator('.planbar').innerText()));
 
   // ---------- listening table ----------
   const [x, y, z] = L; const [xn, yn, zn] = Ln;
@@ -116,7 +118,7 @@ try {
   check('a private heads-up appears when the plan heads somewhere that breaks your limit', (await x.getByText('Only you see this').count()) > 0);
   check('nobody else sees that heads-up', !(await y.getByText(/breaks your private limit/).count()));
   check('the plan above the chat updates from the chat', new RegExp(bad.replace(/[$]/g, '\\$')).test(await x.locator('.planbar').innerText()));
-  check('the "AI hears" line reflects the chat', new RegExp(yn).test(await x.locator('.hearing').innerText()), await x.locator('.hearing').innerText());
+  check('the AI notes the pick under the message, in a few words', new RegExp(bad.replace(/[$]/g, '\\$')).test(await x.locator('.saved').first().innerText()), await x.locator('.saved').first().innerText());
   await shot(x, '05_chat_private_headsup');
   // way 1 of 3: the AI passes it on without a name (straight from the heads-up)
   await x.locator('.bubble.private').getByRole('button', { name: /without my name/ }).click();
@@ -138,10 +140,12 @@ try {
   check('a private question and its answer are seen only by the person who asked', (await x.getByText('asked the AI privately').count()) === 1 && !(await body(y)).includes('just between us') && !(await body(y)).includes('Plan so far:'));
   await shot(x, '05b_private_question');
   // a what-if question to the AI is not a vote
-  const before = await x.locator('.planbar').innerText();
+  // (the question may bring a new part onto the strip, as an open part; no pick changes)
+  const picked = async () => (await x.locator('.pchip:not(.open):not(.more)').allInnerTexts()).join('|');
+  const before = await picked();
   await say(x, '@AI if we took an uber, what would each of us pay?');
   await x.waitForTimeout(900);
-  check('a what-if question to the AI does not change anyone\'s picks', (await x.locator('.planbar').innerText()) === before);
+  check('a what-if question to the AI does not change anyone\'s picks', (await picked()) === before, `${before} -> ${await picked()}`);
   // way 2 of 3: say it myself, from a draft in the message box
   await y.getByRole('button', { name: 'Your private limit' }).click();
   await shot(y, '06_limit_sheet');
@@ -159,6 +163,8 @@ try {
 
   // tapping counts like saying
   const tap = async (p, field, option) => {
+    // a part nobody has brought up yet waits behind the "+N more" chip
+    if (!(await p.locator(`.pchip[aria-label^="${field}:"]`).count())) await p.getByRole('button', { name: /more parts? to decide/ }).click();
     await p.locator(`.pchip[aria-label^="${field}:"]`).click();
     const btn = p.getByRole('dialog').getByRole('button', { name: new RegExp(`^${option.replace(/[$]/g, '\\$')}`) });
     if ((await btn.getAttribute('aria-pressed')) !== 'true') await btn.click();
@@ -177,11 +183,15 @@ try {
   check('the plan is what most of the table wants, and a plan card appears when it is complete', (await x.getByRole('button', { name: 'Accept this plan' }).count()) >= 1);
 
   // pause, ask, book
-  await y.getByRole('button', { name: 'The plan so far, details' }).click();
+  await y.getByRole('button', { name: 'How much the AI chimes in' }).click();
+  await y.getByRole('dialog').getByRole('radio', { name: /^Active/ }).click();
+  await x.getByText(/set the AI to Active/).first().waitFor();
+  check('anyone can set how much the AI chimes in, for the whole table', /AI · Active/.test(await x.locator('.ai-status').innerText()));
+  await y.getByRole('dialog').getByRole('radio', { name: /^Light/ }).click();
   await y.getByRole('button', { name: 'Pause AI' }).click();
   await x.getByText(/paused the AI/).first().waitFor();
   await y.getByRole('button', { name: 'Resume AI' }).click();
-  await y.getByRole('button', { name: 'Close' }).click();
+  await y.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
   check('anyone can pause and resume the AI', true);
   await say(x, '@AI how do we get to Old Town?');
   await x.getByText(/easy by trolley or bus/).first().waitFor({ timeout: 8000 });
@@ -224,11 +234,11 @@ try {
   const uText = await body(u);
   check('answer-only AI made no unprompted moves', !/Quick check before|Tap to pick\.|Heads up/.test(uText) && !(await u.getByText('Only you see this').count()) && !(await u.getByRole('button', { name: /^Me too/ }).count()));
   await say(u, '@AI can you book an uber for us?');
-  // the ride card is on the plan board; the chat has one line that opens it
-  const ref = u.getByRole('button', { name: /^Ride .*On the board/ }).first();
+  // the full ride card is on the plan board; the chat has a small one with app buttons that opens it
+  const ref = u.getByRole('button', { name: /^Ride: details on the board/ }).first();
   await ref.waitFor({ timeout: 6000 });
-  check('the chat shows one line for the ride, not the whole card', (await u.locator('.messages').getByRole('group', { name: /^Ride to / }).count()) === 0);
-  for (const p of A) await p.getByRole('button', { name: /^Ride .*On the board/ }).first().click();
+  check('the chat shows a small card for the ride, not the whole card', (await u.locator('.messages').getByRole('group', { name: /^Ride to / }).count()) === 0);
+  for (const p of A) await p.getByRole('button', { name: /^Ride: details on the board/ }).first().click();
   await u.getByRole('group', { name: /^Ride to / }).first().waitFor({ timeout: 6000 });
   check('answer-only AI answers and books only when asked', true);
   // each person tells the AI privately which rides work; here one person says none do
@@ -276,7 +286,8 @@ try {
   await brief(solo);
   await solo.getByLabel('Message').waitFor({ timeout: 8000 });
   check('Play now fills empty seats with labeled AI players', /3 at the table/.test(await body(solo)));
-  const soloFields = await solo.locator('.pchip').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label').split(':')[0]));
+  await solo.getByRole('button', { name: /more parts? to decide/ }).click(); // nothing has come up yet: show every part
+  const soloFields = await solo.locator('.pchip:not(.more)').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label').split(':')[0]));
   for (const fl of soloFields) {
     await solo.locator(`.pchip[aria-label^="${fl}:"]`).click();
     await solo.getByRole('dialog').locator('.opt').first().click();

@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, emit, getSocket, msToClock, mmss, useCountdown, useSocketEvent } from '../lib.js';
 import TopBar from '../components/Brand.jsx';
-import { PlanCard } from '../components/Cards.jsx';
-import PlanBoard, { Options, PartWidget, CalendarLinks } from '../components/Board.jsx';
+import { PlanCard, InlineCard, IdeaCard } from '../components/Cards.jsx';
+import PlanBoard, { Options, PartWidget, CalendarLinks, FlexToggle } from '../components/Board.jsx';
 import { emit as emitAck } from '../lib.js';
 
 // The flow is three steps: Briefing (your table fills while you read the task and your private limit),
@@ -195,8 +195,8 @@ function Briefing({ g, send, left }) {
         {dots}
         <section className="card stack" style={{ gap: 10 }}>
           <p style={{ margin: 0, fontSize: 16.5 }}>{g.task.prompt}</p>
-          <span className="label">Together you decide</span>
-          {g.task.fields.map((f) => <div key={f.id} className="decide"><strong>{f.name}</strong><span className="small muted">{f.options.map((o) => o.name).join(' · ')}</span></div>)}
+          <span className="label">Along the way you will settle</span>
+          <div className="small">{g.task.fields.map((f) => f.name).join(', ')}. One person starts the chat; the plan board fills in as you talk.</div>
           {g.task.info?.length > 0 && <><span className="label">Good to know</span><GoodToKnow g={g} /></>}
         </section>
         <div className="sticky-foot"><button className="btn block" onClick={() => setStep(1)}>Next: your private limit</button></div>
@@ -238,7 +238,7 @@ function Briefing({ g, send, left }) {
         {head('How the chat works', 3)}
         {dots}
         <section className="card stack how">
-          <div className="how-row"><span className="how-n">1</span><span><strong>Say what you want, or tap it.</strong> Tap a part of the plan above the chat to pick an option. A tap counts the same as saying it.{g.mode === 'listen' ? ' Under someone else\'s message, "Me too" picks what they asked for.' : ''}</span></div>
+          <div className="how-row"><span className="how-n">1</span><span><strong>Talk it through, or tap.</strong> Say what you want, or tap a part of the plan above the chat. Fine with more than one option? Say so ("Friday or Saturday works", "I am flexible"), or mark them on the board.</span></div>
           <div className="how-row"><span className="how-n">2</span><span><strong>Your limit is yours to share.</strong> Tap "Your private limit" at any time. You can say it yourself, or ask the AI to pass it on with your name or without it.</span></div>
           <div className="how-row"><span className="how-n ai">AI</span><span>{AI_HELP[g.mode]} Ask it anything with the AI button: in the group, or privately so only you see the answer.</span></div>
           <div className="how-row"><span className="how-n">3</span><span><strong>No timer.</strong> The plan is what most of the table wants. It locks when everyone taps Accept.</span></div>
@@ -266,8 +266,9 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
     const n = g.board?.changes || 0;
     if (n <= seen.current) { seen.current = n; return undefined; }
     seen.current = n;
-    const last = g.board?.history?.at(-1)?.text;
-    if (wide || sheet || !last || last.startsWith(`${g.me.name} `)) return undefined;
+    const h = g.board?.history?.at(-1), last = h?.text;
+    // what the AI noted from a message already shows under that message, so it is not repeated here
+    if (wide || sheet || !last || h.chat || last.startsWith(`${g.me.name} `)) return undefined;
     setToast(last);
     const id = setTimeout(() => setToast(null), 4500);
     return () => clearTimeout(id);
@@ -300,10 +301,11 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
         </header>
         {!online && <Offline />}
         {!keyboard && <Board g={g} open={setSheet} openBoard={openBoard} wide={wide} />}
-        <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} followUp={() => setAsk('private')} openField={(id) => setSheet({ type: 'field', id })} openBoard={openBoard} onAccept={onAccept} />
+        <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} followUp={() => setAsk('private')} openLimit={() => setSheet({ type: 'limit' })} openField={(id) => setSheet({ type: 'field', id })} openBoard={openBoard} onAccept={onAccept} />
         {!keyboard && <Waiting g={g} openBoard={openBoard} />}
         <div className="dock">
           {toast && !wide && !sheet && <button className="board-toast" onClick={() => { setToast(null); openBoard(); }}><span className="grow">{toast}</span><span className="bt-open">Board</span></button>}
+          {!keyboard && <IdeaChip g={g} send={send} />}
           {!keyboard && <BottomBar g={g} send={send} open={setSheet} humans={humans} />}
           <Composer g={g} send={send} draft={draft} ask={ask} setAsk={setAsk} />
         </div>
@@ -315,31 +317,37 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
       {sheet?.type === 'limit' && <LimitSheet g={g} onClose={close} sayMyself={sayMyself} share={share} />}
       {sheet?.type === 'info' && <InfoSheet g={g} send={send} onClose={close} humans={humans} />}
       {sheet?.type === 'accept' && <AcceptSheet g={g} send={send} onClose={close} open={setSheet} />}
+      {sheet?.type === 'ai' && <AiSheet g={g} send={send} onClose={close} />}
     </div>
   );
 }
 
 // The plan, live above the chat. At listening tables the AI fills it in from the chat; taps count everywhere.
+const STYLE_NAME = { quiet: 'Quiet', light: 'Light', active: 'Active' };
 function Board({ g, open, openBoard, wide }) {
   const listen = g.mode === 'listen';
   const paused = listen && !!g.pausedBy;
+  // Parts show up here once someone brings them up; the rest wait behind one chip.
+  const [all, setAll] = useState(false);
+  const seen = all ? g.panel : g.panel.filter((f) => f.seen), later = g.panel.length - g.panel.filter((f) => f.seen).length;
   return (
     <section className="board" aria-label="The plan so far">
       <div className="planbar">
-        <button className={`ai-status ${paused ? 'paused' : ''} ${listen ? '' : 'plain'}`} onClick={() => openBoard()} aria-label="The plan so far, details">
-          {listen && <span className="dot-live" aria-hidden="true" />}{paused ? 'AI paused' : listen ? 'AI is listening' : 'The plan'}
+        <button className={`ai-status ${paused ? 'paused' : ''} ${listen ? '' : 'plain'}`} onClick={() => (listen ? open({ type: 'ai' }) : openBoard())} aria-label={listen ? 'How much the AI chimes in' : 'The plan so far, details'}>
+          {listen && <span className="dot-live" aria-hidden="true" />}{paused ? 'AI paused' : listen ? `AI · ${STYLE_NAME[g.aiStyle] || 'Light'}` : 'The plan'}
         </button>
         <div className="planbar-scroll">
-          {g.panel.map((f) => (
+          {seen.map((f) => (
             <button key={f.id} className={`pchip ${f.status}`} onClick={() => open({ type: 'field', id: f.id })} aria-label={`${f.name}: ${f.leaderName || 'open'}. Tap to pick.`}>
               <span className="pchip-name">{f.name}</span>
               <span className="pchip-value">{f.leaderName || 'Tap to pick'}</span>
-              <span className="pchip-status">{f.status === 'open' ? 'Open' : f.status === 'agreed' ? (f.own?.length ? ownText(f.own) : 'Most agree') : f.status === 'split' ? 'Undecided' : `${f.count} of ${g.players.length} so far`}</span>
+              <span className="pchip-status">{f.status === 'open' ? 'Open' : f.status === 'agreed' ? (f.own?.length ? ownText(f.own) : 'Most agree') : f.fits?.length && f.status !== 'agreed' ? 'Fits all: ' + (g.task.fields.find((x) => x.id === f.id)?.options.find((o) => o.id === f.fits[0])?.name || '') : f.status === 'split' ? 'Undecided' : `${f.count} of ${g.players.length} so far`}</span>
             </button>
           ))}
+          {later > 0 && <button className="pchip more" onClick={() => setAll(!all)} aria-expanded={all} aria-label={all ? 'Show only the parts that came up' : `${later} more ${later === 1 ? 'part' : 'parts'} to decide`}><span className="pchip-name">{all ? 'Less' : `+${later}`}</span><span className="pchip-value">{all ? 'only what came up' : 'more to decide'}</span></button>}
         </div>
       </div>
-      {g.hearing && !wide && <button className="hearing" onClick={() => openBoard()}><span className="hearing-k">AI hears</span><span className="hearing-v">{g.hearing}</span></button>}
+      {g.hearing && !wide && g.aiStyle === 'active' && <button className="hearing" onClick={() => openBoard()}><span className="hearing-k">AI hears</span><span className="hearing-v">{g.hearing}</span></button>}
     </section>
   );
 }
@@ -352,9 +360,10 @@ function FieldSheet({ g, send, id, onClose, openBoard }) {
     <Sheet title={row?.name || 'Pick'} onClose={onClose}>
       <p className="small muted" style={{ margin: 0 }}>{row?.personal
         ? 'Tap how you will do this. Each person can go their own way here: the plan shows what most people picked and lists anyone who differs.'
-        : f?.kind === 'time' ? 'Mark every time you could make it, or tap one option. The plan takes what most of the table wants.'
+        : f?.kind === 'time' || f?.kind === 'money' ? 'Mark every option you could live with, or tap one. The plan takes what most of the table wants.'
         : 'Tap what you want, or add your own option. It counts the same as saying it in the chat. The plan takes what most of the table wants.'}</p>
       <PartWidget g={g} send={send} id={id} onMenu={menu} />
+      {!row?.personal && <FlexToggle g={g} send={send} id={id} />}
       <div className="row between"><span className={`chip ${row?.status === 'agreed' ? 'ok' : ''}`}>{STATUS[row?.status || 'open']}</span>
         <span className="row" style={{ gap: 6 }}><button className="btn small ghost" onClick={() => { onClose(); openBoard(`part-${id}`); }}>Whole board</button><button className="btn small" onClick={onClose}>Done</button></span></div>
     </Sheet>
@@ -370,6 +379,29 @@ function BoardSheet({ g, send, onClose, onAccept }) {
         <div className="sheet-body stack"><PlanBoard g={g} send={send} onAccept={onAccept} onClose={onClose} /></div>
       </div>
     </div>
+  );
+}
+
+// How much the AI chimes in, for the whole table. Anyone can change it; the chat shows who did.
+const STYLES = [
+  ['quiet', 'Quiet', 'Keeps the board up to date and answers when you ask. Posts nothing on its own.'],
+  ['light', 'Light', 'Also adds a map, ride or table card when the plan needs one, and asks at most one question.'],
+  ['active', 'Active', 'Also checks in when someone has not weighed in, and offers ideas when you are stuck.']
+];
+function AiSheet({ g, send, onClose }) {
+  const paused = !!g.pausedBy;
+  return (
+    <Sheet title="How much should the AI chime in?" onClose={onClose}>
+      <div className="style-opts" role="radiogroup" aria-label="AI style">
+        {STYLES.map(([id, name, text]) => (
+          <button key={id} role="radio" aria-checked={g.aiStyle === id} className={`style-opt ${g.aiStyle === id ? 'on' : ''}`} onClick={() => send('game:style', { style: id })}>
+            <strong>{name}</strong><span>{text}</span>
+          </button>
+        ))}
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>This changes it for everyone at the table.{g.aiStyleBy ? ` ${g.aiStyleBy} set it last.` : ''} Private tips only you see stay on in every style.</p>
+      <div className="row between"><button className={`btn small ${paused ? '' : 'ghost'}`} onClick={() => send('game:pause-ai', { paused: !paused })}>{paused ? 'Resume AI' : 'Pause AI'}</button><button className="btn small" onClick={onClose}>Done</button></div>
+    </Sheet>
   );
 }
 
@@ -427,6 +459,14 @@ function InfoSheet({ g, send, onClose, humans }) {
       </div>
     </Sheet>
   );
+}
+
+// "Need an idea?" while nobody has put forward anything to do yet. Gone once an idea is on the table.
+function IdeaChip({ g, send }) {
+  const main = g.panel.find((f) => f.id === g.mainField);
+  if (g.deal || !g.starter?.started || !main || main.options.length > 0) return null;
+  if (g.chat.some((m) => m.idea)) return null; // the idea card has its own "Another idea"
+  return <button className="idea-chip" onClick={() => send('game:idea')}>Need an idea? Ask the AI</button>;
 }
 
 // Shown when the AI is waiting for a private answer from you (which rides or times work), so it does not scroll away.
@@ -509,8 +549,11 @@ function Reacts({ m, send }) {
   if (!m.reacts?.length) return null;
   return <div className="reacts">{m.reacts.map((r) => <button key={r.e} className={`react ${r.mine ? 'mine' : ''}`} title={r.who.join(', ')} aria-label={`${r.e} ${r.n}, from ${r.who.join(', ')}`} onClick={() => send('game:react', { msgId: m.id, emoji: r.e })}>{r.e} {r.n}</button>)}</div>;
 }
+// What the AI noted from a message, without the writer's own name: "Ramen in Hillcrest", "not Saturday", "Flexible on budget".
+const savedText = (x, who) => x.startsWith(`${who} → `) ? x.slice(who.length + 3) : x.startsWith(`${who}: `) ? x.slice(who.length + 2)
+  : x.startsWith(`${who} can go either way on `) ? `Flexible on ${x.slice(who.length + 22)}` : x.startsWith(`${who} is firm on `) ? `Firm on ${x.slice(who.length + 12)}` : x;
 const CARD_LABEL = { ride: 'Ride', table: 'Table booking', bill: 'Who owes what', map: 'Map', route: 'Route' };
-function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openField, openBoard }) {
+function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openField, openBoard, openLimit }) {
   const [picker, setPicker] = useState(null);
   const box = useRef(null);
   const atBottom = useRef(true);
@@ -530,6 +573,7 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
   }, []);
   const byCode = Object.fromEntries(g.players.map((p) => [p.pcode, p]));
   const unshared = g.me.limit.sharedAt === null;
+  const started = !!g.starter?.started;
   return (
     <div className={`messages-wrap ${newBelow ? 'has-new' : ''}`}>
       <div className="messages" ref={box} aria-live="polite" onScroll={(e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; if (atBottom.current) { setNewBelow(0); seenId.current = last?.id || 0; } }}>
@@ -538,18 +582,24 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
           if (m.kind === 'booking' || m.kind === 'bill' || m.kind === 'map') {
             const bk = m.kind === 'booking' ? (g.bookings || []).find((x) => x.id === m.bookingId) : null;
             const mp = m.kind === 'map' ? (g.maps || []).find((x) => x.id === m.mapId) : null;
-            const label = bk ? CARD_LABEL[bk.kind] : m.kind === 'bill' ? CARD_LABEL.bill : mp?.kind === 'route' ? CARD_LABEL.route : CARD_LABEL.map;
             // a map of the options is the board's map of the place part; a route is its own card
             const placePart = g.board?.placeField ? `part-${g.board.placeField}` : null;
             const target = bk ? `booking-${bk.id}` : m.kind === 'bill' ? `bill-${m.billId}` : mp?.kind === 'route' || !placePart ? `map-${m.mapId}` : placePart;
             return (
               <div key={m.id} className="m-row ai first">
                 <span className="avatar ai" aria-hidden="true">AI</span>
-                <button className="card-ref" onClick={() => openBoard(target)}><span className="card-ref-k">{label}</span><span className="card-ref-v">{m.text}</span><span className="card-ref-go">On the board ›</span></button>
+                <InlineCard m={m} g={g} openBoard={openBoard} target={target} />
               </div>
             );
           }
           if (m.kind === 'plan') return <PlanCard key={m.id} g={g} m={m} onAccept={onAccept} />;
+          if (m.kind === 'starter') return started ? null : (
+            <div key={m.id} className="starter-card" role="note">
+              <strong>{m.text}</strong>
+              <span className="small muted">The plan board fills in as people talk. No ideas yet? Ask the AI for one.</span>
+              <button className="btn small ghost" onClick={() => send('game:idea')}>Get an idea</button>
+            </div>
+          );
           if (m.kind === 'system') return <div key={m.id} className={`m-system ${m.host ? 'host' : ''}`}>{m.text}</div>;
           if (m.kind === 'pick') return <div key={m.id} className="m-pick">{m.from === g.me.pcode ? m.text.replace(m.name, 'You').replace('their pick', 'your pick') : m.text.replace(`with ${g.me.name}:`, 'with you:')}</div>;
           const prev = g.chat[i - 1];
@@ -570,8 +620,14 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
                 {first ? <span className="avatar ai" aria-hidden="true">AI</span> : <span className="avatar-gap" />}
                 <div className={`bubble ai ${m.kind === 'private' ? 'private' : ''}`}>
                   {(first || m.kind === 'private') && <div className="m-name">{m.kind === 'private' ? <span className="only-you">Only you see this</span> : m.passedOn ? 'AI · passing on a limit' : 'AI'}</div>}
-                  {m.text}
+                  {m.idea ? (/^Stuck/.test(m.text) ? <div className="small">Stuck? One idea:</div> : null) : m.text}
+                  {m.idea && <IdeaCard m={m} g={g} send={send} />}
                   {m.poll && <Options g={g} send={send} id={m.poll} compact />}
+                  {m.poll && !g.deal && !g.panel.find((f) => f.id === m.poll)?.personal && <button className={`metoo flexchip ${g.me.flex?.[m.poll] ? 'on' : ''}`} aria-pressed={!!g.me.flex?.[m.poll]} onClick={() => send('game:flex', { field: m.poll, value: !g.me.flex?.[m.poll] })}>{g.me.flex?.[m.poll] ? 'Either works for me ✓' : 'Either works for me'}</button>}
+                  {m.quick && !g.deal && <div className="quick" role="group" aria-label="Answer with one tap">{m.quick.map((q, k) => (
+                    <button key={k} className={`metoo ${m.used === k ? 'on' : ''}`} disabled={m.used !== undefined && m.used !== null && ['say', 'pick', 'flex'].includes(q.kind)}
+                      onClick={() => (q.kind === 'limit' ? openLimit() : q.kind === 'ask' ? followUp() : send('game:quick', { msgId: m.id, index: k }))}>{q.label}</button>
+                  ))}</div>}
                   {m.card === 'compare' && m.compare && <Compare c={m.compare} g={g} send={send} />}
                   {m.blocks?.map((b, k) => <Block key={k} b={b} g={g} send={send} />)}
                   {m.actions === 'limit' && unshared && <ShareOptions sayMyself={sayMyself} share={share} />}
@@ -597,7 +653,7 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
                 </div>
                 {picker === m.id && <div className="react-picker" role="group" aria-label="React">{REACTIONS.map((e) => <button key={e} aria-label={`React ${e}`} onClick={() => { send('game:react', { msgId: m.id, emoji: e }); setPicker(null); }}>{e}</button>)}</div>}
                 <Reacts m={m} send={send} />
-                {m.saved?.length > 0 && <div className="saved" title="What the AI saved from this message">Saved: {m.saved.join(' · ')}</div>}
+                {m.saved?.length > 0 && <div className="saved" title="What the AI noted from this message"><span aria-hidden="true">✓ </span><span className="sr-only">AI noted: </span>{m.saved.map((x) => savedText(x, p?.name?.replace(/ \(AI\)$/, '') || m.name)).join(' · ')}</div>}
               </div>
             </div>
           );

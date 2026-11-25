@@ -121,12 +121,15 @@ try {
   });
   await say(a, 'typing with the keyboard open');
   check('message sent with the keyboard open reaches others', await c.getByText('typing with the keyboard open').first().waitFor({ timeout: 4000 }).then(() => true, () => false));
-  // pick by tapping
-  await a.locator('.pchip').first().click();
+  // pick by tapping (parts nobody has raised yet wait behind the "+N more" chip)
+  const showAll = async (p) => { const more = p.getByRole('button', { name: /more parts? to decide/ }); if (await more.count()) await more.click(); };
+  await showAll(a); await showAll(b);
+  await a.locator('.pchip:not(.more)').first().click();
   await audit(a, 'se_14_pick_sheet');
   await a.getByRole('dialog').locator('.opt').first().click();
   await a.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
-  await a.getByRole('button', { name: 'The plan so far, details' }).click(); await audit(a, 'se_15_plan_sheet'); await a.getByRole('button', { name: 'Close' }).click();
+  await a.getByRole('button', { name: 'Plan board' }).click(); await audit(a, 'se_15_plan_sheet'); await a.getByRole('button', { name: 'Close' }).click();
+  await a.getByRole('button', { name: 'How much the AI chimes in' }).click(); await audit(a, 'se_15b_ai_style_sheet'); await a.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
   await a.getByRole('button', { name: 'Task' }).click(); await audit(a, 'se_16_task_sheet'); await a.getByRole('button', { name: 'Close' }).click();
   // the three ways to share, and the draft in the message box
   await a.getByRole('button', { name: 'Your private limit' }).click();
@@ -137,7 +140,7 @@ try {
   await a.getByRole('button', { name: 'Send', exact: true }).click();
   await b.getByText('shared a limit').first().waitFor();
   // everyone picks the first option of every part, then accepts
-  const fields = await a.locator('.pchip').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label').split(':')[0]));
+  const fields = await a.locator('.pchip:not(.more)').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label').split(':')[0]));
   for (const p of [a, b]) for (const fl of fields) {
     await p.locator(`.pchip[aria-label^="${fl}:"]`).click();
     const btn = p.getByRole('dialog').locator('.opt').first();

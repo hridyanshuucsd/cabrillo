@@ -43,6 +43,12 @@ async function play(label, { key, bad, mode = 'listen' }) {
   const row = (id) => t.panel().find((f) => f.id === id);
 
   ck('two AI players, named Ari and Kai', ari.short === 'Ari' && kai.short === 'Kai' && ari.name === 'Ari (AI)');
+  // A person starts the chat: the AI players wait for them, and the AI posts no greeting of its own.
+  await sleep(700);
+  ck('AI players wait for the person who starts the chat', aiLines().length === 0, JSON.stringify(aiLines().map((m) => m.text)));
+  ck('the person at the table is the one who starts', t.starter === me.pcode && t.chat.some((m) => m.kind === 'starter' && m.to === 'u1'));
+  ck('the AI does not open with a greeting', !t.chat.some((m) => m.from === 'AI'));
+  t.say('u1', 'hey everyone');
   await until(() => aiLines().length >= 2, 2500);
   const open = aiLines().map((m) => m.text);
   ck('both AI players say something when the chat opens, and not the same thing', open.length >= 2 && !sameMessage(open[0], open[1]) && !sameMessage(open[1], open[0]), JSON.stringify(open));

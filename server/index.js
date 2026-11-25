@@ -199,6 +199,10 @@ io.on('connection', (socket) => {
   socket.on('game:order', ({ sessionId, placeId, itemId, delta }) => table(sessionId)?.order(id.key, String(placeId), String(itemId), delta));
   socket.on('game:menu-bill', ({ sessionId, placeId }) => table(sessionId)?.menuBill(id.key, String(placeId)));
   socket.on('game:metoo', ({ sessionId, msgId }) => table(sessionId)?.metoo(id.key, msgId));
+  socket.on('game:flex', ({ sessionId, field, value }) => table(sessionId)?.setFlex(id.key, String(field), !!value));
+  socket.on('game:idea', ({ sessionId }) => table(sessionId)?.idea(id.key));
+  socket.on('game:quick', ({ sessionId, msgId, index }) => table(sessionId)?.quick(id.key, msgId, index));
+  socket.on('game:style', ({ sessionId, style }) => table(sessionId)?.setStyle(id.key, String(style)));
   socket.on('game:accept', ({ sessionId, value, fits }) => table(sessionId)?.accept(id.key, value, fits));
 
   // Host console: watch tables, advance stages, pause the AI and speak for it (Wizard of Oz).

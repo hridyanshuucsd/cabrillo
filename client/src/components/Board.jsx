@@ -30,6 +30,7 @@ export function Options({ g, send, id, compact }) {
             onClick={() => send('game:pick', { field: id, option: mine === o.id ? '' : o.id })}>
             <span className="opt-name">{o.name}</span>
             {compact ? (names.length > 0 && <span className="opt-n">{names.length}</span>) : names.length > 0 && <span className="opt-who">{names.map((n, i) => <span key={i} className="nw">{n}{i < names.length - 1 ? ', ' : ''}</span>)}</span>}
+            {row?.fits?.includes(o.id) && row.status !== 'agreed' && <span className="opt-fits">{compact ? 'Fits all' : 'Works for everyone so far'}</span>}
             {!compact && no.length > 0 && <span className="opt-warn">Does not work for {no.join(', ')}</span>}
             {!compact && o.custom && o.by && <span className="opt-by">added by {o.by}</span>}
             {mine === o.id && !compact && <span className="opt-check" aria-hidden="true">✓</span>}
@@ -87,7 +88,7 @@ export function AvailGrid({ g, send, id }) {
           </React.Fragment>
         ))}
       </div>
-      <div className="tiny muted">Tap a box: yes, then maybe, then no. Mark every time you could do; your pick becomes the one most people can make.</div>
+      <div className="tiny muted">Tap a box: yes, then maybe (only if needed), then no. Mark everything you could live with; your pick becomes the one most people can do.</div>
     </div>
   );
 }
@@ -166,6 +167,19 @@ function PlaceWidget({ g, send, id, onMenu }) {
   );
 }
 
+// "I can go either way on this": the AI notes it and counts you with whatever the others lead with.
+export function FlexToggle({ g, send, id }) {
+  const on = !!g.me.flex?.[id];
+  const row = g.panel.find((f) => f.id === id);
+  const others = (row?.flexible || []).filter((n) => n !== g.me.name);
+  return (
+    <label className={`flex-toggle ${on ? 'on' : ''}`}>
+      <input type="checkbox" checked={on} disabled={!!g.deal} onChange={() => send('game:flex', { field: id, value: !on })} />
+      <span><strong>I can go either way on this</strong><span className="small muted"> {on ? 'You go with what the others pick, unless you marked it No.' : 'Say so, and you count with what most others pick.'}{others.length ? ` Also flexible: ${others.join(', ')}.` : ''}</span></span>
+    </label>
+  );
+}
+
 // ---------- one part of the plan ----------
 export function PartWidget({ g, send, id, onMenu }) {
   const f = g.task.fields.find((x) => x.id === id);
@@ -173,7 +187,7 @@ export function PartWidget({ g, send, id, onMenu }) {
   if (!f) return null;
   return (
     <div className="stack" style={{ gap: 8 }}>
-      {f.kind === 'time' && <AvailGrid g={g} send={send} id={id} />}
+      {(f.kind === 'time' || f.kind === 'money') && <AvailGrid g={g} send={send} id={id} />}
       {f.kind === 'place' ? <PlaceWidget g={g} send={send} id={id} onMenu={onMenu || (() => {})} /> : <Options g={g} send={send} id={id} />}
       {row?.own?.length > 0 && <div className="small muted">Going their own way: {row.own.map((x) => `${x.name} (${x.optionName})`).join(', ')}</div>}
       {f.kind !== 'place' && <AddOption g={g} field={id} placeholder={f.kind === 'time' ? 'Add a time' : 'Add another option'} />}
@@ -312,9 +326,14 @@ export default function PlanBoard({ g, send, onAccept, onClose }) {
       </div>
       {showHistory && <div className="history">{(b.history || []).slice().reverse().map((h, i) => <div key={i} className="small"><span className="muted">{Math.floor(h.t / 60000)}:{String(Math.floor(h.t / 1000) % 60).padStart(2, '0')}</span> {h.text}</div>)}{!b.history?.length && <div className="small muted">No changes yet.</div>}</div>}
       {listen && (
-        <div className="row between pboard-ai">
-          <span className="small grow">{paused ? `Paused by ${g.pausedBy}. Taps still count.` : g.hearing || 'The AI updates this board from your chat. It never votes.'}</span>
-          <button className={`btn small ${paused ? '' : 'ghost'}`} onClick={() => send('game:pause-ai', { paused: !paused })}>{paused ? 'Resume AI' : 'Pause AI'}</button>
+        <div className="stack pboard-ai" style={{ gap: 6 }}>
+          <span className="small">{paused ? `Paused by ${g.pausedBy}. Taps still count.` : g.hearing || 'The AI updates this board from your chat. It never votes.'}</span>
+          <div className="row between wrap-row" style={{ gap: 6 }}>
+            <span className="seg small-seg" role="radiogroup" aria-label="How much the AI chimes in">
+              {[['quiet', 'Quiet'], ['light', 'Light'], ['active', 'Active']].map(([id, name]) => <button key={id} role="radio" aria-checked={g.aiStyle === id} className={g.aiStyle === id ? 'on' : ''} onClick={() => send('game:style', { style: id })}>{name}</button>)}
+            </span>
+            <button className={`btn small ${paused ? '' : 'ghost'}`} onClick={() => send('game:pause-ai', { paused: !paused })}>{paused ? 'Resume AI' : 'Pause AI'}</button>
+          </div>
         </div>
       )}
       {g.complete && !g.deal && (
@@ -326,11 +345,16 @@ export default function PlanBoard({ g, send, onAccept, onClose }) {
       )}
       <BoardNav root={rootRef} />
       <Ticket g={g} />
-      {g.panel.map((f, i) => (
-        <section key={f.id} className={`pcard ${f.status}`} id={`part-${f.id}`} data-nav={i === 0 ? 'Plan' : undefined}>
-          <div className="row between"><strong>{f.name}</strong><span className={`chip ${f.status === 'agreed' ? 'ok' : f.status === 'split' ? 'warn' : ''}`}>{f.status === 'agreed' ? f.leaderName : STATUS[f.status]}</span></div>
-          <PartWidget g={g} send={send} id={f.id} onMenu={openMenu} />
-        </section>
+      {[...g.panel.filter((f) => f.seen), ...g.panel.filter((f) => !f.seen)].map((f, i, all) => (
+        <React.Fragment key={f.id}>
+          {!f.seen && (i === 0 || all[i - 1].seen) && <div className="label" style={{ marginTop: 6 }}>Not talked about yet</div>}
+          <section className={`pcard ${f.status} ${f.seen ? '' : 'unseen'}`} id={`part-${f.id}`} data-nav={i === 0 ? 'Plan' : undefined}>
+            <div className="row between"><strong>{f.name}</strong><span className={`chip ${f.status === 'agreed' ? 'ok' : f.status === 'split' ? 'warn' : ''}`}>{f.status === 'agreed' ? f.leaderName : STATUS[f.status]}</span></div>
+            {f.flexible?.length > 0 && <div className="tiny muted">Can go either way: {f.flexible.join(', ')}</div>}
+            <PartWidget g={g} send={send} id={f.id} onMenu={openMenu} />
+            {!f.personal && <FlexToggle g={g} send={send} id={f.id} />}
+          </section>
+        </React.Fragment>
       ))}
       <Weather g={g} send={send} />
       <OpeningHours g={g} />

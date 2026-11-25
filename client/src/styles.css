@@ -989,3 +989,52 @@ table.tables tbody th .muted { white-space: nowrap; }
   .composer { padding-top: 4px; padding-bottom: calc(4px + env(safe-area-inset-bottom)); }
   .composer input[type=text] { min-height: 40px; }
 }
+
+/* ---------- Nov 25: a quieter chat ---------- */
+/* the plan strip before anything has come up, and the chip for parts nobody has raised yet */
+.pchip-empty { align-self: center; font-size: 13px; color: var(--ink2); padding: 0 6px; white-space: nowrap; }
+.pchip.more { min-width: 0; border-style: dashed; background: transparent; }
+.pchip.more .pchip-name { color: var(--ink); }
+.pchip.more .pchip-value { font-weight: 600; color: var(--ink2); }
+/* inline cards in the chat: a picture, one big number, and buttons that hand off to the real app */
+.icard { width: min(86%, 360px); background: var(--surface); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: var(--shadow); flex-shrink: 0; }
+.icard .leaflet-container { pointer-events: none; }
+.icard-body { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px; }
+.icard-top { display: flex; flex-direction: column; gap: 0; }
+.icard-big { font-size: 19px; font-weight: 800; letter-spacing: -.01em; line-height: 1.2; }
+.icard-sub { font-size: 13px; color: var(--ink2); line-height: 1.35; }
+.icard-status { font-size: 12.5px; font-weight: 700; color: var(--ink2); }
+.icard-status.booked, .icard-status.settled { color: var(--primary-dark); }
+.icard-status.none, .icard-status.stale { color: var(--warn); }
+.icard-places { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; font-weight: 700; }
+.icard-place { display: inline-flex; align-items: center; gap: 4px; }
+.icard-place.lead { color: var(--primary-dark); }
+.icard-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.app-btn { display: inline-flex; align-items: center; min-height: 34px; padding: 0 12px; border-radius: 999px; border: 1.5px solid var(--line2); background: var(--surface); color: var(--ink); font-weight: 800; font-size: 13px; text-decoration: none; cursor: pointer; }
+.app-btn.main { background: var(--ink); color: #fff; border-color: var(--ink); }
+.app-btn[aria-pressed=true] { background: var(--primary-tint); border-color: var(--primary); color: var(--primary-dark); }
+.app-more { min-height: 34px; padding: 0 6px; border: 0; background: none; color: var(--ink2); font-weight: 700; font-size: 13px; text-decoration: underline; cursor: pointer; margin-left: auto; }
+.bubble.ai .icard { width: 100%; margin-top: 6px; box-shadow: none; }
+/* what the AI noted under a message: a tick and the value, nothing more */
+.saved { display: flex; gap: 2px; align-items: baseline; color: var(--primary-dark); font-weight: 700; opacity: .85; }
+/* the person who opens the chat */
+.starter-card { align-self: center; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; max-width: 92%; margin: 12px 0; padding: 14px 16px; border-radius: 18px; background: var(--surface); border: 1.5px solid var(--primary); }
+.idea-chip { align-self: center; margin: 0 auto 6px; display: block; min-height: 34px; padding: 0 14px; border-radius: 999px; border: 1.5px dashed var(--ai); background: var(--ai-tint); color: var(--ink); font-weight: 800; font-size: 13px; cursor: pointer; }
+/* one-tap answers in a private nudge, and "either works" under a quick question */
+.quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.metoo.on, .metoo[aria-pressed=true] { background: var(--primary-tint); }
+.metoo:disabled { opacity: .45; cursor: default; }
+.flexchip { margin-top: 6px; border-style: dashed; }
+.opt-fits { flex-basis: 100%; order: 4; font-size: 11.5px; font-weight: 800; color: var(--primary-dark); }
+.opts.compact .opt-fits { flex-basis: auto; order: 0; margin-left: 4px; }
+.flex-toggle { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 14px; border: 1.5px dashed var(--line2); background: var(--surface); cursor: pointer; }
+.flex-toggle.on { border-color: var(--primary); background: var(--primary-tint); }
+.flex-toggle input { width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--primary); flex: none; }
+.flex-toggle > span { display: flex; flex-direction: column; gap: 2px; font-size: 14.5px; }
+.pcard.unseen { opacity: .8; }
+/* how much the AI chimes in */
+.style-opts { display: flex; flex-direction: column; gap: 8px; }
+.style-opt { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 10px 12px; min-height: 56px; border-radius: 14px; border: 1.5px solid var(--line2); background: var(--surface); cursor: pointer; }
+.style-opt span { font-size: 13px; color: var(--ink2); line-height: 1.35; }
+.style-opt.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.small-seg button { min-height: 32px; font-size: 12.5px; }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import MapView, { along, gmapsDirections, gmapsPlace } from './MapView.jsx';
+import MapView, { along, gmapsDirections, gmapsPlace, uberLink, lyftLink, openTableLink, resyLink } from './MapView.jsx';
 
 // Cards the AI posts in the chat: a map of the options, an Uber-style ride, and a restaurant table.
 // Every card is a demo: nothing is booked or charged, and each card says so.
@@ -292,6 +292,107 @@ export function BillCard({ b, text, send, deal }) {
           </div>
         ))}
         {b.status === 'stale' && <div className="small muted">The plan changed after this bill. Ask "@AI who owes what" for a new one.</div>}
+      </div>
+    </div>
+  );
+}
+
+// ---------- the same cards, small, inside the chat ----------
+// A picture and a few words instead of a paragraph: a map with times, a ride with its price, a table with its time,
+// who owes what. Each one hands off to the real app (Google Maps, Uber, Lyft, OpenTable, Resy) and opens the full card
+// on the board for the details. Only the person's own private answer is asked for here, with one tap to the board.
+const Go = ({ href, children }) => <a className="app-btn" href={href} target="_blank" rel="noreferrer noopener">{children}</a>;
+export function InlineCard({ m, g, openBoard, target }) {
+  const bk = m.kind === 'booking' ? (g.bookings || []).find((x) => x.id === m.bookingId) : null;
+  const mp = m.kind === 'map' ? (g.maps || []).find((x) => x.id === m.mapId) : null;
+  const bill = m.kind === 'bill' ? (g.bills || []).find((x) => x.id === m.billId) : null;
+  const details = (label) => <button className="app-more" onClick={() => openBoard(target)} aria-label={`${label}: details on the board`}>Details</button>;
+  if (mp && mp.kind === 'route') {
+    const transit = mp.mode === 'transit';
+    return (
+      <div className="icard" role="group" aria-label={`Summary: route to ${mp.place.name}`}>
+        <MapView points={[{ ...mp.origin, kind: 'pickup' }, { ...mp.place, kind: 'dropoff' }]} route={mp.route} height={104} />
+        <div className="icard-body">
+          <div className="icard-top"><span className="icard-big">{mp.minutes} min</span><span className="icard-sub">{transit ? 'by bus or trolley' : 'by car'} to {mp.place.name}</span></div>
+          <div className="icard-actions"><Go href={gmapsDirections(mp.origin, mp.place, transit ? 'transit' : 'driving')}>Google Maps</Go>{details('Route')}</div>
+        </div>
+      </div>
+    );
+  }
+  if (mp) {
+    const pts = [{ ...mp.origin, kind: 'pickup' }, ...mp.places.map((p, i) => ({ ...p, kind: 'place', label: i + 1, active: p.id === mp.leader }))];
+    return (
+      <div className="icard" role="group" aria-label="Summary: map of the options">
+        <MapView points={pts} height={110} />
+        <div className="icard-body">
+          <div className="icard-places">{mp.places.map((p, i) => <span key={p.id} className={`icard-place ${p.id === mp.leader ? 'lead' : ''}`}><span className="mk place inline">{i + 1}</span>{p.name.replace(/ hike$/, '')}<span className="muted"> {p.minutes} min</span></span>)}</div>
+          <div className="icard-actions"><Go href={gmapsPlace(mp.places[0] || mp.origin)}>Google Maps</Go>{details('Map')}</div>
+        </div>
+      </div>
+    );
+  }
+  if (bk && bk.kind === 'ride') {
+    const opt = bk.options.find((o) => o.id === bk.choice);
+    const ask = bk.status === 'asking' && bk.rider !== false && bk.mine === null;
+    return (
+      <div className="icard" role="group" aria-label={`Summary: ride to ${bk.place.name}`}>
+        <MapView points={[{ ...bk.origin, kind: 'pickup' }, { ...bk.place, kind: 'dropoff' }]} route={bk.route} height={104} />
+        <div className="icard-body">
+          <div className="icard-top"><span className="icard-big">{bk.status === 'booked' ? money(bk.perPerson) : `from ${money(Math.min(...bk.options.map((o) => o.perPerson)))}`}</span><span className="icard-sub">each · ride to {bk.place.name} · {bk.minutes} min</span></div>
+          <div className={`icard-status ${bk.status}`}>{bk.status === 'asking' ? `${bk.answered} of ${bk.of} answered` : bk.status === 'booked' ? `Booked (demo): ${opt?.name}` : 'Not booked'}</div>
+          <div className="icard-actions">
+            {ask && <button className="app-btn main" onClick={() => openBoard(target)}>Answer privately</button>}
+            <Go href={uberLink(bk.origin, bk.place)}>Uber</Go><Go href={lyftLink(bk.origin, bk.place)}>Lyft</Go>{details('Ride')}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (bk) {
+    const ask = bk.status === 'asking' && bk.mine === null;
+    return (
+      <div className="icard" role="group" aria-label={`Summary: table at ${bk.restaurant}`}>
+        <div className="icard-body">
+          <div className="icard-top"><span className="icard-big">{bk.status === 'booked' ? bk.slot : `Table for ${bk.n}`}</span><span className="icard-sub">{bk.restaurant}{bk.whenName ? ` · ${bk.whenName}` : ''}</span></div>
+          <div className={`icard-status ${bk.status}`}>{bk.status === 'asking' ? `${bk.answered} of ${bk.of} answered · about ${money(bk.perPerson)} each` : bk.status === 'booked' ? `Reserved (demo) for ${bk.n}` : 'Not reserved'}</div>
+          <div className="icard-actions">
+            {ask && <button className="app-btn main" onClick={() => openBoard(target)}>Pick times privately</button>}
+            <Go href={openTableLink(bk.restaurant, bk.n)}>OpenTable</Go><Go href={resyLink(bk.restaurant)}>Resy</Go><Go href={gmapsPlace(bk.place, bk.restaurant)}>Maps</Go>{details('Table booking')}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (bill) {
+    const total = bill.rows.reduce((a, r) => a + r.amount, 0);
+    const mine = bill.rows.filter((r) => r.mine && !r.paid).reduce((a, r) => a + r.amount, 0);
+    return (
+      <div className="icard" role="group" aria-label={`Summary: ${bill.title}`}>
+        <div className="icard-body">
+          <div className="icard-top"><span className="icard-big">{mine ? `You pay ${money(mine)}` : money(total)}</span><span className="icard-sub">{bill.title}</span></div>
+          <div className={`icard-status ${bill.status}`}>{bill.status === 'settled' ? 'All paid (demo)' : bill.status === 'stale' ? 'Out of date' : `${bill.rows.filter((r) => r.paid).length} of ${bill.rows.length} paid`}</div>
+          <div className="icard-actions">{mine > 0 && bill.status === 'open' && <button className="app-btn main" onClick={() => openBoard(target)}>Pay</button>}{details('Who owes what')}</div>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+// An idea from the AI: the option, a small map when it is a place, and one tap to pick it or ask for another.
+export function IdeaCard({ m, g, send }) {
+  const x = m.idea;
+  const mine = g.me.prefs[x.field] === x.option;
+  return (
+    <div className="icard idea" role="group" aria-label={`Idea: ${x.name}`}>
+      {x.lat && <MapView points={[{ lat: x.lat, lng: x.lng, kind: 'place', label: '', active: true }]} height={90} />}
+      <div className="icard-body">
+        <div className="icard-top"><span className="icard-big">{x.name}</span>{x.minutes ? <span className="icard-sub">{x.minutes} min from campus</span> : null}</div>
+        {!g.deal && <div className="icard-actions">
+          <button className={`app-btn ${mine ? '' : 'main'}`} aria-pressed={mine} onClick={() => send('game:pick', { field: x.field, option: mine ? '' : x.option })}>{mine ? 'Picked' : 'I like it'}</button>
+          <button className="app-btn" onClick={() => send('game:idea')}>Another idea</button>
+          {x.lat && <Go href={gmapsPlace({ lat: x.lat, lng: x.lng }, x.restaurant || x.name)}>Google Maps</Go>}
+        </div>}
       </div>
     </div>
   );

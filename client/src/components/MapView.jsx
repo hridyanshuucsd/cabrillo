@@ -91,6 +91,13 @@ export default function MapView({ points = [], route, car, height = 160, interac
 // Google Maps links: no key needed. These open the real Google Maps app or site.
 export const gmapsDirections = (from, to, mode = 'driving') => `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lng}&destination=${to.lat},${to.lng}&travelmode=${mode}`;
 export const gmapsPlace = (p, q) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q ? `${q} near ${p.lat},${p.lng}` : `${p.lat},${p.lng}`)}`;
+// Hand-offs to the apps people book with. The cards here are demos; these open the real app (or its website) with the
+// trip or the restaurant filled in, so a group can carry the plan over in one tap.
+const ll = (k, p) => `${k}[latitude]=${p.lat}&${k}[longitude]=${p.lng}`;
+export const uberLink = (from, to) => `https://m.uber.com/ul/?action=setPickup&${ll('pickup', from)}&pickup[nickname]=${encodeURIComponent(from.name || 'Pickup')}&${ll('dropoff', to)}&dropoff[nickname]=${encodeURIComponent(to.name || 'Drop-off')}`;
+export const lyftLink = (from, to) => `https://lyft.com/ride?id=lyft&${ll('pickup', from)}&${ll('destination', to)}`;
+export const openTableLink = (name, n) => `https://www.opentable.com/s?term=${encodeURIComponent(`${name} San Diego`)}${n ? `&covers=${n}` : ''}`;
+export const resyLink = (name) => `https://resy.com/cities/san-diego-ca/search?query=${encodeURIComponent(name)}`;
 
 // Position along a route, from 0 (start) to 1 (end), with the heading in degrees.
 export function along(route, t) {

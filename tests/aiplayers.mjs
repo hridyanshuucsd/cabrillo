@@ -116,8 +116,8 @@ async function run(label, port, env, extraArgs = []) {
       await a.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
     }
     check(`${label}: the plan card appears with an Accept button`, await wait(a.getByRole('button', { name: 'Accept this plan' }), 20000));
-    check(`${label}: the AI adds a route card for the bus`, await wait(a.getByRole('button', { name: /^Route .*On the board/ }), 8000));
-    await a.getByRole('button', { name: /^Route .*On the board/ }).first().click();
+    check(`${label}: the AI adds a route card for the bus`, await wait(a.getByRole('button', { name: /^Route: details on the board/ }), 8000));
+    await a.getByRole('button', { name: /^Route: details on the board/ }).first().click();
     check(`${label}: the route card is on the board`, await wait(a.getByRole('dialog').getByRole('group', { name: 'Getting to La Jolla Cove' }), 4000));
     await a.waitForTimeout(800);
     await a.screenshot({ path: `${DIR}/${label}_04_route.png` });

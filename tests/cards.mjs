@@ -59,8 +59,8 @@ try {
   // Two places compared: the AI points to the map on the board.
   await say(a, 'Old Town for tacos sounds good');
   await say(b, 'I was thinking Balboa Park, honestly');
-  check('the AI points to the map when two places are compared, without being asked', await wait(a.getByRole('button', { name: /^Map .*On the board/ })));
-  await a.getByRole('button', { name: /^Map .*On the board/ }).first().click();
+  check('the AI points to the map when two places are compared, without being asked', await wait(a.getByRole('button', { name: /^Map: details on the board/ })));
+  await a.getByRole('button', { name: /^Map: details on the board/ }).first().click();
   const where = (await board(a)).locator('#part-where');
   check('the board shows the places on a map with directions', await wait(where.locator('.leaflet-container'), 4000) && (await where.getByRole('link', { name: 'Directions' }).count()) >= 4);
   await a.waitForTimeout(1200);
@@ -71,8 +71,13 @@ try {
   // The plan says rideshare: the AI prices a ride on the board.
   await say(a, 'let us take a rideshare there');
   await say(c, 'rideshare is fine with me');
-  check('the AI prices a ride when the plan says rideshare, without being asked', await wait(a.getByRole('button', { name: /^Ride .*On the board/ })));
-  check('the chat shows one line, not the whole card', (await a.locator('.messages').getByRole('group', { name: 'Ride to Old Town' }).count()) === 0);
+  check('the AI prices a ride when the plan says rideshare, without being asked', await wait(a.getByRole('button', { name: /^Ride: details on the board/ })));
+  check('the chat shows a small card, not the whole card', (await a.locator('.messages').getByRole('group', { name: 'Ride to Old Town', exact: true }).count()) === 0
+    && (await a.locator('.messages').getByRole('group', { name: 'Summary: ride to Old Town' }).count()) === 1);
+  const mini = a.locator('.messages').getByRole('group', { name: 'Summary: ride to Old Town' });
+  check('the small ride card hands off to Uber and Lyft with the trip filled in', /^https:\/\/m\.uber\.com\/ul\/\?action=setPickup&pickup\[latitude\]=/.test(await mini.getByRole('link', { name: 'Uber' }).getAttribute('href'))
+    && /^https:\/\/lyft\.com\/ride\?id=lyft&pickup/.test(await mini.getByRole('link', { name: 'Lyft' }).getAttribute('href')));
+  check('the small ride card asks for the private answer with one button', (await mini.getByRole('button', { name: 'Answer privately' }).count()) === 1);
   const ride = (p) => p.getByRole('dialog', { name: 'The plan so far' }).getByRole('group', { name: 'Ride to Old Town' });
   for (const p of ps) await board(p);
   check('the board says why the AI added the ride', await wait(ride(a).getByText('The AI added this because the plan says rideshare.'), 3000));
@@ -103,7 +108,10 @@ try {
   check('the booking result is also said in the chat', await wait(a.getByText(/Standard is the cheapest ride that works for everyone/).first(), 2000));
 
   await say(c, 'can we also reserve a table for lunch');
-  check('asking for a table adds a table card to the board', await wait(a.getByRole('button', { name: /^Table booking .*On the board/ })));
+  check('asking for a table adds a table card to the board', await wait(a.getByRole('button', { name: /^Table booking: details on the board/ })));
+  const miniT = a.locator('.messages').getByRole('group', { name: /^Summary: table at / }).first();
+  check('the small table card hands off to OpenTable and Resy', /^https:\/\/www\.opentable\.com\/s\?term=/.test(await miniT.getByRole('link', { name: 'OpenTable' }).getAttribute('href'))
+    && /^https:\/\/resy\.com\/cities\/san-diego-ca\/search\?query=/.test(await miniT.getByRole('link', { name: 'Resy' }).getAttribute('href')));
   const tbl = (p) => p.getByRole('dialog', { name: 'The plan so far' }).getByRole('group', { name: /Booking: Table for 3/ });
   for (const p of ps) await board(p);
   await tbl(a).scrollIntoViewIfNeeded(); await a.waitForTimeout(800);
