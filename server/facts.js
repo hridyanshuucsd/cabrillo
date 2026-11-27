@@ -150,5 +150,5 @@ export const BILLS = {
 // "You are staying both nights." -> "i'm staying both nights.": how an AI player says one of its facts.
 export function firstPerson(text) {
   return String(text).replace(/^You are\b/, "i'm").replace(/^You have\b/, 'i have').replace(/^You can\b/, 'i can').replace(/^You\b/, 'i')
-    .replace(/\byour\b/gi, 'my').replace(/\byou\b/gi, 'me').replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase());
+    .replace(/\byour\b/gi, 'my').replace(/([,;] (?:but|and|so) |\. )you (are)\b/gi, "$1i'm").replace(/([,;] (?:but|and|so) |\. )you\b/gi, '$1i').replace(/\byou\b/gi, 'me').replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase());
 }
