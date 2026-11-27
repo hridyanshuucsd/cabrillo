@@ -2127,6 +2127,8 @@ export class Table {
     if (!text || text.length < 2) return { why: 'empty' };
     if (/\b[pa]0\d\b/i.test(text)) return { why: 'a player code' };
     if (!scripted && (p.saidAll || new Set()).has(text.trim().toLowerCase())) return { why: 'word for word what it said before' };
+    // two players sending the very same words in a row reads like a bot, not a friend
+    if (!scripted && this.chat.filter((x) => !x.to && ['chat', 'limit'].includes(x.kind)).slice(-3).some((x) => x.from !== p.pcode && x.text.trim().toLowerCase() === text.trim().toLowerCase())) return { why: 'word for word what someone just said' };
     if (!scripted) {
       // A model's lines are not filtered: it says what it wants. The board only counts options it names and that
       // keep to its own limit, so the plan still shows only what it actually said.
