@@ -1078,3 +1078,39 @@ table.tables tbody th .muted { white-space: nowrap; }
 .snacks { display: flex; flex-direction: column; gap: 4px; }
 .snack-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .snack-row .qty { min-width: 18px; text-align: center; font-weight: 800; }
+/* getting there: compare the ways from your home */
+.travel { display: flex; flex-direction: column; gap: 8px; }
+.ways { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.way { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 10px; border-radius: 12px; border: 1.5px solid var(--line2); background: var(--surface); cursor: pointer; font: inherit; }
+.way.best { border-color: var(--primary); }
+.way.on { background: var(--primary-tint); border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.way:disabled { opacity: .55; cursor: default; }
+.way-name { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-weight: 800; font-size: 14px; }
+.way-name .chip { font-size: 10.5px; padding: 1px 6px; }
+.way-nums { display: flex; gap: 8px; align-items: baseline; font-size: 14px; }
+@media (max-width: 420px) { .ways { grid-template-columns: 1fr; } }
+/* potluck plates */
+.plate-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; padding: 4px 0; }
+.plate-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 104px; }
+.plate { width: 96px; height: 96px; border-radius: 50%; background: radial-gradient(circle at 50% 50%, #fff 0 52%, #eef1f3 53% 60%, #fff 61% 100%); border: 1.5px solid #d6dde1; box-shadow: 0 2px 6px rgba(16,32,43,.12); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; align-content: center; gap: 2px; padding: 10px; }
+.plate-wrap.mine .plate { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-tint), 0 2px 6px rgba(16,32,43,.12); }
+.plate-empty { font-size: 11px; color: var(--ink2); text-align: center; }
+.dish { position: relative; width: 34px; height: 34px; border-radius: 50%; border: 0; background: transparent; font-size: 24px; line-height: 1; cursor: pointer; padding: 0; }
+.dish.voted { background: var(--primary-tint); }
+.dish:hover { transform: scale(1.1); }
+.dish-votes { position: absolute; right: -4px; top: -4px; min-width: 17px; height: 17px; border-radius: 9px; background: var(--primary); color: #fff; font-size: 10.5px; font-weight: 800; display: flex; align-items: center; justify-content: center; border: 1.5px solid #fff; }
+.plate-name { font-weight: 800; font-size: 13px; }
+.plate-items { text-align: center; min-height: 14px; }
+.dish-palette { display: flex; flex-wrap: wrap; gap: 6px; }
+.dish-pick { min-height: 32px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line2); background: var(--surface); font-size: 13px; font-weight: 700; cursor: pointer; }
+.dish-pick.on { background: var(--primary-tint); border-color: var(--primary); }
+.dish-pick:disabled { opacity: .4; cursor: default; }
+/* the right side on a laptop follows the chat */
+.focus { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 24px; }
+.focus-head { display: flex; align-items: center; gap: 10px; }
+.focus-head strong { font-size: 17px; }
+.focus-card > .icard-wrap { width: 100%; }
+.focus-card .app-more { display: none; }
+.focus-empty { padding: 28px 18px; border-radius: 16px; border: 1.5px dashed var(--line2); color: var(--ink2); text-align: center; line-height: 1.45; }
+.focus-rest { align-self: stretch; min-height: 40px; border-radius: 12px; border: 1px solid var(--line2); background: var(--surface); font-weight: 800; cursor: pointer; }
+.card-ref-go { font-size: 12px; font-weight: 700; color: var(--ink2); }

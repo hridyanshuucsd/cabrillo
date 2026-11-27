@@ -190,3 +190,40 @@ export function driverStart(p) {
   const ang = Math.random() * Math.PI * 2;
   return { lat: round5(p.lat + Math.cos(ang) * 0.014), lng: round5(p.lng + Math.sin(ang) * 0.016) };
 }
+
+// ---------- where each person starts from ----------
+// Everyone at a table gets a home in a real San Diego neighborhood, so "rideshare, carpool or the bus?" has a
+// concrete answer for each of them. A "where you live" fact that names a neighborhood wins over the random one.
+export const HOMES = [
+  { name: 'On campus', lat: 32.8798, lng: -117.2359, kw: ['on campus', 'dorm', 'next to geisel'] },
+  { name: 'University City', lat: 32.8616, lng: -117.2116, kw: ['university city', 'utc'] },
+  { name: 'Clairemont', lat: 32.8326, lng: -117.2004, kw: ['clairemont'] },
+  { name: 'Pacific Beach', lat: 32.7948, lng: -117.2554, kw: ['pacific beach', ' pb'] },
+  { name: 'North Park', lat: 32.7475, lng: -117.1293, kw: ['north park'] },
+  { name: 'Mira Mesa', lat: 32.9156, lng: -117.1439, kw: ['mira mesa'] },
+  { name: 'Carmel Valley', lat: 32.9410, lng: -117.2210, kw: ['carmel valley'] },
+  { name: 'Hillcrest', lat: 32.7484, lng: -117.1617, kw: ['hillcrest'] },
+  { name: 'Kearny Mesa', lat: 32.8338, lng: -117.1517, kw: ['kearny mesa', 'convoy'] },
+  { name: 'Linda Vista', lat: 32.7840, lng: -117.1700, kw: ['linda vista'] },
+  { name: 'Ocean Beach', lat: 32.7499, lng: -117.2510, kw: ['ocean beach'] },
+  { name: 'La Jolla Village', lat: 32.8680, lng: -117.2290, kw: ['la jolla village', 'near campus', 'shared apartment'] }
+];
+export function homeFrom(text) { const s = ` ${String(text || '').toLowerCase()} `; return HOMES.find((h) => h.kw.some((k) => s.includes(k))) || null; }
+
+// How each way of getting there compares for one person, from their home: minutes and dollars. For the game:
+// rideshare is about $3 plus $1.60 a mile and 35 cents a minute for the car (split by the people in it); the bus or
+// trolley is $2.50, slower and with a walk; a carpool picks you up on the way and costs a share of gas.
+export function waysFor(home, dest, drivers = [], riders = 1) {
+  if (!home || !dest) return null;
+  const e = estimate(home, dest);
+  const car = Math.round((3 + 1.6 * e.miles + 0.35 * e.minutes) * 100) / 100;
+  const transitMin = home.name === 'On campus' && e.miles < 1.2 ? Math.max(5, Math.round(e.miles * 20)) : Math.round(e.minutes * 2.2 + 8);
+  const driver = drivers.filter((d) => d.home).map((d) => ({ d, detour: estimate(d.home, home).minutes })).sort((a, b) => a.detour - b.detour)[0] || null;
+  const pool = driver ? { minutes: e.minutes + Math.min(25, Math.round(driver.detour / 2)), cost: Math.round((e.miles * 2 * 0.2) / Math.max(2, riders) * 100) / 100, driver: driver.d.name, self: driver.detour === 0 } : null;
+  return {
+    miles: e.miles,
+    rideshare: { minutes: e.minutes + 6, cost: Math.round((car / Math.max(1, Math.min(4, riders))) * 100) / 100, solo: car },
+    transit: { minutes: transitMin, cost: 2.5 },
+    carpool: pool
+  };
+}

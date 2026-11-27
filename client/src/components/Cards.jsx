@@ -354,6 +354,7 @@ export function InlineCard({ m, g, send, openBoard, target, offset }) {
       </div>
     );
   }
+  if (m.kind === 'plates' && g.plates) return <div className="icard-wrap"><PlatesCard g={g} send={send} compact />{details('Potluck plates')}</div>;
   if (m.kind === 'cinema' && g.cinema) return <div className="icard-wrap"><CinemaCard g={g} send={send} compact />{details('Tickets and snacks')}</div>;
   return null;
 }
@@ -437,6 +438,58 @@ export function CinemaCard({ g, send, compact }) {
           ? <div className="reserved"><strong>Booked · confirmation {c.booked.code}</strong><span className="small">Booked by {c.booked.by}. Show the code at the counter; your snacks will be ready when you arrive.</span></div>
           : !g.deal && <button className="btn block" disabled={!ready || !c.seats.length} onClick={() => send('game:cinema-book')}>{!ready ? 'Set the movie, theater and time first' : !c.seats.length ? 'Pick seats first' : 'Book the seats and snacks'}</button>}
         <div className="tiny muted">Demo · nothing is charged</div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- potluck plates ----------
+// Your plate holds what you would bring (up to three dishes): tap a dish below to put it on, tap it on your plate to
+// take it off. Everyone's plates sit side by side; tap a dish on someone else's plate to vote for it. The line under
+// the plates shows what the table still needs and what two people would both bring.
+export function PlatesCard({ g, send, compact }) {
+  const pl = g.plates;
+  if (!pl) return null;
+  const food = (id) => pl.foods.find((f) => f.id === id);
+  const me = pl.plates.find((x) => x.mine);
+  const onMine = new Set(me?.items.map((x) => x.id) || []);
+  const missing = pl.coverage.filter((c) => !c.n && c.cat !== 'Supplies').map((c) => c.cat.toLowerCase());
+  const locked = !!g.deal;
+  return (
+    <div className={`card-ai plates ${compact ? 'compact' : ''}`} id={compact ? undefined : 'plates-card'} role="group" aria-label={compact ? 'In the chat: potluck plates' : 'Potluck plates'}>
+      <div className="card-ai-body">
+        <div className="row between"><strong className="ride-title">Who brings what</strong><span className="small muted">Tap a dish to vote for it</span></div>
+        <div className="plate-row">
+          {pl.plates.map((p) => (
+            <div key={p.code} className={`plate-wrap ${p.mine ? 'mine' : ''}`}>
+              <div className="plate" aria-label={`${p.mine ? 'Your' : `${p.name}'s`} plate`}>
+                {p.items.length === 0 && <span className="plate-empty">{p.mine ? 'Add a dish' : 'Empty'}</span>}
+                {p.items.map((x) => (
+                  <button key={x.id} className={`dish ${x.myVote ? 'voted' : ''}`} disabled={locked}
+                    title={x.voters.length ? `Voted by ${x.voters.join(', ')}` : ''}
+                    aria-label={p.mine ? `Take ${food(x.id).name} off your plate` : `${x.myVote ? 'Take back your vote for' : 'Vote for'} ${p.name} bringing ${food(x.id).name}`}
+                    onClick={() => send('game:plate', p.mine ? { action: 'remove', item: x.id } : { action: 'vote', item: x.id, owner: p.code })}>
+                    <span className="dish-icon" aria-hidden="true">{food(x.id).icon}</span>
+                    {x.votes > 0 && <span className="dish-votes">{x.votes}</span>}
+                  </button>
+                ))}
+              </div>
+              <span className="plate-name">{p.mine ? 'You' : p.name.replace(/ \(AI\)$/, '')}</span>
+              <span className="plate-items tiny muted">{p.items.map((x) => food(x.id).name).join(', ')}</span>
+            </div>
+          ))}
+        </div>
+        {!locked && (
+          <div className="dish-palette" role="group" aria-label="Dishes you could bring">
+            {pl.foods.map((f) => (
+              <button key={f.id} className={`dish-pick ${onMine.has(f.id) ? 'on' : ''}`} disabled={!onMine.has(f.id) && onMine.size >= 3}
+                aria-pressed={onMine.has(f.id)} onClick={() => send('game:plate', { action: onMine.has(f.id) ? 'remove' : 'add', item: f.id })}>
+                <span aria-hidden="true">{f.icon}</span> {f.name}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="small">{missing.length ? <>Still missing: <strong>{missing.join(', ')}</strong>.</> : 'Every kind of dish is covered.'}{pl.dupes.length > 0 && <span className="opt-warn"> Two people would bring {pl.dupes.join(', ')}.</span>}</div>
       </div>
     </div>
   );

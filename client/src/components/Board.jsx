@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { emit } from '../lib.js';
 import MapView from './MapView.jsx';
-import { MapCard, RideCard, TableCard, BillCard, CinemaCard } from './Cards.jsx';
+import { MapCard, RideCard, TableCard, BillCard, CinemaCard, PlatesCard } from './Cards.jsx';
 import { OpeningHours, Itinerary, Weather, Bring, Agreements, Ticket } from './Artifacts.jsx';
 import { Cost, Cars, Chores, Work, PrivatePick, Listings, Truck, Gifts, Roster, Agenda, Study, Shifts, Invite, Reminders } from './Extras.jsx';
 
@@ -191,9 +191,42 @@ export function PartWidget({ g, send, id, onMenu }) {
   return (
     <div className="stack" style={{ gap: 8 }}>
       {(f.kind === 'time' || f.kind === 'money') && <AvailGrid g={g} send={send} id={id} />}
-      {f.kind === 'place' ? <PlaceWidget g={g} send={send} id={id} onMenu={onMenu || (() => {})} /> : <Options g={g} send={send} id={id} />}
+      {f.kind === 'travel' && g.travel ? <TravelCompare g={g} send={send} id={id} /> : f.kind === 'place' ? <PlaceWidget g={g} send={send} id={id} onMenu={onMenu || (() => {})} /> : <Options g={g} send={send} id={id} />}
       {row?.own?.length > 0 && <div className="small muted">Going their own way: {row.own.map((x) => `${x.name} (${x.optionName})`).join(', ')}</div>}
       {f.kind !== 'place' && <AddOption g={g} field={id} placeholder={f.kind === 'time' ? 'Add a time' : 'Add another option'} />}
+    </div>
+  );
+}
+
+// ---------- getting there: rideshare, carpool or the bus, from your own home ----------
+// Each person has a home for the game. This card puts every home and the place on one map, and compares the ways
+// there for you: minutes and dollars, with the best one marked. Tap a way to pick it.
+const WAY_NAME = { rideshare: 'Rideshare', carpool: 'Carpool', transit: 'Bus or trolley' };
+export function TravelCompare({ g, send, id }) {
+  const t = g.travel;
+  const mine = g.me.prefs[id];
+  const pts = [...t.people.map((p) => ({ lat: p.home.lat, lng: p.home.lng, kind: 'place', label: p.name[0], active: p.mine })), ...(t.dest ? [{ ...t.dest, kind: 'dropoff' }] : [])];
+  const ways = t.me.ways;
+  const rows = ways ? ['rideshare', 'carpool', 'transit'].map((k) => ({ k, w: ways[k] })) : [];
+  return (
+    <div className="travel" role="group" aria-label="Ways to get there">
+      <MapView points={pts} height={150} interactive />
+      <div className="small">You start from <strong>{t.me.home.name}</strong>{t.me.hasCar ? ' and you have a car' : ''}. {t.dest ? <>Going to <strong>{t.dest.name}</strong>.</> : 'Pick a place to compare the ways there.'}</div>
+      {ways && (
+        <div className="ways" role="radiogroup" aria-label="Your way there">
+          {rows.map(({ k, w }) => (
+            <button key={k} role="radio" aria-checked={mine === k} disabled={!w || !!g.deal} className={`way ${mine === k ? 'on' : ''} ${t.me.best === k ? 'best' : ''}`}
+              onClick={() => send('game:pick', { field: id, option: mine === k ? '' : k })}>
+              <span className="way-name">{WAY_NAME[k]}{t.me.best === k && <span className="chip ok">Best for you</span>}</span>
+              {w ? <span className="way-nums"><strong>{w.minutes} min</strong><span>${w.cost.toFixed(2)}</span></span> : <span className="small muted">Nobody nearby has a car</span>}
+              {k === 'carpool' && w && <span className="tiny muted">{w.self ? 'You drive; gas split' : `${w.driver} picks you up; share of gas`}</span>}
+              {k === 'rideshare' && w && <span className="tiny muted">Split with others going by rideshare (${w.solo.toFixed(2)} alone)</span>}
+              {k === 'transit' && w && <span className="tiny muted">Includes walking and waiting</span>}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="people-homes small muted">{t.people.filter((p) => !p.mine).map((p) => `${p.name}: ${p.home.name}${p.minutes ? `, ${p.minutes} min drive` : ''}${p.car ? ', has a car' : ''}${p.way ? `, ${WAY_NAME[p.way] || p.way}` : ''}`).join(' · ')}</div>
     </div>
   );
 }
@@ -381,6 +414,7 @@ export default function PlanBoard({ g, send, onAccept, onClose }) {
       <Reminders g={g} x={x} act={act} />
       {Object.entries(b.menus || {}).map(([id, m]) => <MenuCard key={id} g={g} send={send} id={id} m={m} />)}
       {g.cinema && <CinemaCard g={g} send={send} />}
+      {g.plates && <PlatesCard g={g} send={send} />}
       {cards.length > 0 && <div className="label" id="part-cards" data-nav="Cards" style={{ marginTop: 6 }}>Cards</div>}
       {cards.map((m) => {
         if (m.kind === 'booking') { const bk = (g.bookings || []).find((x) => x.id === m.bookingId); return bk?.kind === 'ride' ? <RideCard key={m.id} b={bk} send={send} offset={g.clockOffset} /> : <TableCard key={m.id} b={bk} send={send} />; }

@@ -197,6 +197,7 @@ function Briefing({ g, send, left }) {
           <p style={{ margin: 0, fontSize: 16.5 }}>{g.task.prompt}</p>
           <span className="label">Along the way you will settle</span>
           <div className="small">{g.task.fields.map((f) => f.name).join(', ')}. One person starts the chat; the plan board fills in as you talk.</div>
+          {g.me.home && <><span className="label">Where you start from</span><div className="small">For this game you live in <strong>{g.me.home}</strong>. The plan board shows how long each way of getting there takes from your home, and what it costs.</div></>}
           {g.task.info?.length > 0 && <><span className="label">Good to know</span><GoodToKnow g={g} /></>}
         </section>
         <div className="sticky-foot"><button className="btn block" onClick={() => setStep(1)}>Next: your private limit</button></div>
@@ -258,6 +259,7 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
   const [draft, setDraft] = useState(null); // text placed in the message box by "Say it myself"
   const [ask, setAsk] = useState('off');    // 'off' | 'group' (everyone sees the question) | 'private' (only you do)
   const wide = useWide();
+  const [focusId, setFocusId] = useState(null); // on a laptop: the card shown on the right (a chat message id)
   const close = () => setSheet(null);
   // On a phone the board is out of sight, so a change someone else makes shows for a few seconds above the message box.
   const [toast, setToast] = useState(null);
@@ -302,7 +304,7 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
         </header>
         {!online && <Offline />}
         {!keyboard && !wide && <Board g={g} open={setSheet} openBoard={openBoard} wide={wide} />}
-        <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} followUp={() => setAsk('private')} openLimit={() => setSheet({ type: 'limit' })} openField={(id) => setSheet({ type: 'field', id })} openBoard={openBoard} onAccept={onAccept} />
+        <Messages wide={wide} onFocus={setFocusId} g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} followUp={() => setAsk('private')} openLimit={() => setSheet({ type: 'limit' })} openField={(id) => setSheet({ type: 'field', id })} openBoard={openBoard} onAccept={onAccept} />
         {!keyboard && <Waiting g={g} openBoard={openBoard} />}
         <div className="dock">
           {toast && !wide && !sheet && <button className="board-toast" onClick={() => { setToast(null); openBoard(); }}><span className="grow">{toast}</span><span className="bt-open">Board</span></button>}
@@ -311,7 +313,7 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
           <Composer g={g} send={send} draft={draft} ask={ask} setAsk={setAsk} />
         </div>
       </div>
-      {wide && <aside className="board-col" aria-label="Plan board"><PlanBoard g={g} send={send} onAccept={onAccept} /></aside>}
+      {wide && <aside className="board-col" aria-label="Plan board"><FocusPanel g={g} send={send} onAccept={onAccept} focusId={focusId} setFocusId={setFocusId} /></aside>}
 
       {sheet?.type === 'field' && <FieldSheet g={g} send={send} id={sheet.id} onClose={close} openBoard={openBoard} />}
       {sheet?.type === 'board' && <BoardSheet g={g} send={send} onClose={close} onAccept={onAccept} />}
@@ -462,6 +464,43 @@ function InfoSheet({ g, send, onClose, humans }) {
   );
 }
 
+// ---------- the right side on a laptop: what the chat is on right now ----------
+// The card the chat just brought up (a map, a ride, a table, seats and snacks, plates) and the part of the plan people
+// are talking about come to the top, ready to use. The rest of the plan waits below, folded away.
+const CARD_KINDS = ['booking', 'map', 'cinema', 'plates', 'bill'];
+function FocusPanel({ g, send, onAccept, focusId, setFocusId }) {
+  const [rest, setRest] = useState(false);
+  const recent = g.chat.slice(-14);
+  const chosen = focusId ? g.chat.find((m) => m.id === focusId) : null;
+  const latest = [...recent].reverse().find((m) => CARD_KINDS.includes(m.kind));
+  const card = chosen || latest;
+  const topic = g.topic ? g.panel.find((f) => f.id === g.topic) : null;
+  const set = g.panel.filter((f) => f.status === 'agreed').length;
+  const showRest = () => { setRest(true); setTimeout(() => document.getElementById('rest-of-plan')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50); };
+  useEffect(() => { if (latest && focusId && latest.id > focusId) setFocusId(null); }, [latest?.id]); // a new card replaces the one you picked
+  return (
+    <div className="focus">
+      <div className="focus-head">
+        <div className="grow"><strong>{topic ? `Now: ${topic.name.toLowerCase()}` : card ? 'Now' : 'The plan'}</strong><div className="small muted">{set} of {g.panel.length} parts set</div></div>
+        {g.complete && !g.deal && <button className={`btn small ${g.me.accepted ? 'ghost' : ''}`} onClick={onAccept}>{g.me.accepted ? 'Accepted' : 'Accept the plan'}</button>}
+      </div>
+      {card && <div className="focus-card">{card.kind === 'map' && (g.maps || []).find((x) => x.id === card.mapId)?.kind !== 'route' && g.board?.placeField && !g.deal
+        ? <section className="pcard"><strong>{g.panel.find((f) => f.id === g.board.placeField)?.name}</strong><PartWidget g={g} send={send} id={g.board.placeField} /></section>
+        : <InlineCard m={card} g={g} send={send} openBoard={showRest} target={null} offset={g.clockOffset} />}</div>}
+      {topic && !(card?.kind === 'map' && topic.id === g.board?.placeField) && (
+        <section className="pcard focus-part">
+          <div className="row between"><strong>{topic.name}</strong><span className={`chip ${topic.status === 'agreed' ? 'ok' : topic.status === 'split' ? 'warn' : ''}`}>{topic.status === 'agreed' ? topic.leaderName : STATUS[topic.status]}</span></div>
+          <PartWidget g={g} send={send} id={topic.id} />
+          {!topic.personal && <FlexToggle g={g} send={send} id={topic.id} />}
+        </section>
+      )}
+      {!card && !topic && <div className="focus-empty">As you talk, what you are talking about shows up here: the map, times, rides, tables and more. Everything works right here.</div>}
+      <button className="focus-rest" aria-expanded={rest} onClick={() => (rest ? setRest(false) : showRest())}>{rest ? 'Hide the rest of the plan' : 'Rest of the plan'}</button>
+      {rest && <div id="rest-of-plan"><PlanBoard g={g} send={send} onAccept={onAccept} /></div>}
+    </div>
+  );
+}
+
 // "Need an idea?" while nobody has put forward anything to do yet. Gone once an idea is on the table.
 function IdeaChip({ g, send }) {
   const main = g.panel.find((f) => f.id === g.mainField);
@@ -574,8 +613,8 @@ function Reacts({ m, send }) {
 // What the AI noted from a message, without the writer's own name: "Ramen in Hillcrest", "not Saturday", "Flexible on budget".
 const savedText = (x, who) => x.startsWith(`${who} → `) ? x.slice(who.length + 3) : x.startsWith(`${who}: `) ? x.slice(who.length + 2)
   : x.startsWith(`${who} can go either way on `) ? `Flexible on ${x.slice(who.length + 22)}` : x.startsWith(`${who} is firm on `) ? `Firm on ${x.slice(who.length + 12)}` : x;
-const CARD_LABEL = { ride: 'Ride', table: 'Table booking', bill: 'Who owes what', map: 'Map', route: 'Route' };
-function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openField, openBoard, openLimit }) {
+const CARD_LABEL = { ride: 'Ride', table: 'Table booking', bill: 'Who owes what', map: 'Map', route: 'Route', cinema: 'Seats and snacks', plates: 'Potluck plates' };
+function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openField, openBoard, openLimit, wide, onFocus }) {
   const [picker, setPicker] = useState(null);
   const box = useRef(null);
   const atBottom = useRef(true);
@@ -601,13 +640,20 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
       <div className="messages" ref={box} aria-live="polite" onScroll={(e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; if (atBottom.current) { setNewBelow(0); seenId.current = last?.id || 0; } }}>
         {g.chat.map((m, i) => {
           // Cards work right in the chat (the plan board keeps them too). The movie card shows once: the latest one.
-          if (m.kind === 'cinema' && g.chat.some((x) => x.kind === 'cinema' && x.id > m.id)) return null;
-          if (m.kind === 'booking' || m.kind === 'bill' || m.kind === 'map' || m.kind === 'cinema') {
+          if ((m.kind === 'cinema' || m.kind === 'plates') && g.chat.some((x) => x.kind === m.kind && x.id > m.id)) return null;
+          if (m.kind === 'booking' || m.kind === 'bill' || m.kind === 'map' || m.kind === 'cinema' || m.kind === 'plates') {
             const bk = m.kind === 'booking' ? (g.bookings || []).find((x) => x.id === m.bookingId) : null;
             const mp = m.kind === 'map' ? (g.maps || []).find((x) => x.id === m.mapId) : null;
             // a map of the options is the board's map of the place part; a route is its own card
             const placePart = g.board?.placeField ? `part-${g.board.placeField}` : null;
-            const target = m.kind === 'cinema' ? 'cinema-card' : bk ? `booking-${bk.id}` : m.kind === 'bill' ? `bill-${m.billId}` : mp?.kind === 'route' || !placePart ? `map-${m.mapId}` : placePart;
+            const target = m.kind === 'plates' ? 'plates-card' : m.kind === 'cinema' ? 'cinema-card' : bk ? `booking-${bk.id}` : m.kind === 'bill' ? `bill-${m.billId}` : mp?.kind === 'route' || !placePart ? `map-${m.mapId}` : placePart;
+            // On a laptop the card itself comes up on the right; the chat keeps one line that brings it back.
+            if (wide) return (
+              <div key={m.id} className="m-row ai first">
+                <span className="avatar ai" aria-hidden="true">AI</span>
+                <button className="card-ref" onClick={() => onFocus(m.id)}><span className="card-ref-k">{CARD_LABEL[m.kind === 'booking' ? bk?.kind : m.kind === 'map' && mp?.kind === 'route' ? 'route' : m.kind] || 'Card'}</span><span className="card-ref-v">{m.text}</span><span className="card-ref-go">On the right ›</span></button>
+              </div>
+            );
             return (
               <div key={m.id} className="m-row ai first">
                 <span className="avatar ai" aria-hidden="true">AI</span>

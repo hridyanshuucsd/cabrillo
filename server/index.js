@@ -202,9 +202,10 @@ io.on('connection', (socket) => {
   socket.on('game:flex', ({ sessionId, field, value }) => table(sessionId)?.setFlex(id.key, String(field), !!value));
   socket.on('game:idea', ({ sessionId }) => table(sessionId)?.idea(id.key));
   socket.on('game:quick', ({ sessionId, msgId, index }) => table(sessionId)?.quick(id.key, msgId, index));
-  socket.on('game:seat', ({ sessionId, seat }) => table(sessionId)?.seat(id.key, String(seat)));
+  socket.on('game:seat', ({ sessionId, seat }) => table(sessionId)?.takeSeat(id.key, String(seat)));
   socket.on('game:snack', ({ sessionId, item, delta }) => table(sessionId)?.snack(id.key, String(item), delta));
   socket.on('game:cinema-book', ({ sessionId }) => table(sessionId)?.bookCinema(id.key));
+  socket.on('game:plate', ({ sessionId, action, item, owner }) => table(sessionId)?.plate(id.key, String(action), String(item), owner));
   socket.on('game:style', ({ sessionId, style }) => table(sessionId)?.setStyle(id.key, String(style)));
   socket.on('game:accept', ({ sessionId, value, fits }) => table(sessionId)?.accept(id.key, value, fits));
 

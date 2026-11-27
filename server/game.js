@@ -8,7 +8,7 @@ import { costFor, seatsFromFact, carpoolPicked, CHORES, sectionsFor, projectDate
   GIFTS, ROSTER, OPPONENTS, SIZES, AGENDA, STUDY_TOPICS, SHIFTS, SHIFT_START, INVITE_TASKS, inviteText } from './extras.js';
 import { FACTS, ROLE, BILLS, firstPerson } from './facts.js';
 import { readFlex, stance } from './flex.js';
-import { PICKUP, placeField, placeOf, placesOf, estimate, route, rideOptions, slotsFor, driver, driverStart, fieldKind, searchPlaces } from './places.js';
+import { PICKUP, placeField, placeOf, placesOf, estimate, route, rideOptions, slotsFor, driver, driverStart, fieldKind, searchPlaces, HOMES, homeFrom, waysFor } from './places.js';
 
 // The flow has three steps:
 //   1. Briefing (stages "forming" and "setup"): the table fills while each person reads the task and their private limit.
@@ -67,6 +67,15 @@ const REACTIONS = ['👍', '❤️', '😂', '😮', '🎉', '👎'];     // a c
 // Private nudges to quiet people and private limit alerts go out in every style.
 export const STYLES = { quiet: 0, light: 1, active: 3 };
 // "any ideas?", "idk what to do": the group is stuck on what to do.
+// Potluck plates: the dishes people can put on their plate to bring.
+const FOODS = [
+  { id: 'turkey', name: 'Turkey', icon: '🦃', cat: 'Main' }, { id: 'lasagna', name: 'Lasagna', icon: '🍝', cat: 'Main' }, { id: 'tacos', name: 'Taco fixings', icon: '🌮', cat: 'Main' },
+  { id: 'mac', name: 'Mac and cheese', icon: '🧀', cat: 'Side' }, { id: 'salad', name: 'Salad', icon: '🥗', cat: 'Side' }, { id: 'potatoes', name: 'Mashed potatoes', icon: '🥔', cat: 'Side' },
+  { id: 'rolls', name: 'Rolls', icon: '🥖', cat: 'Side' }, { id: 'guac', name: 'Chips and guac', icon: '🥑', cat: 'Side' }, { id: 'fruit', name: 'Fruit plate', icon: '🍇', cat: 'Side' },
+  { id: 'pie', name: 'Pumpkin pie', icon: '🥧', cat: 'Dessert' }, { id: 'cookies', name: 'Cookies', icon: '🍪', cat: 'Dessert' }, { id: 'cake', name: 'Cake', icon: '🍰', cat: 'Dessert' },
+  { id: 'soda', name: 'Sodas', icon: '🥤', cat: 'Drinks' }, { id: 'cider', name: 'Apple cider', icon: '🧃', cat: 'Drinks' }, { id: 'plates', name: 'Plates and cups', icon: '🍽️', cat: 'Supplies' }
+];
+const PLATE_RE = /\b(bring|brings|bringing|make|making|cook|cooking|dish|dishes|dessert|side|food|pie|salad|drinks?)\b/i;
 // Movie night: seats and snacks come up in the chat ("should we get popcorn?", "where do we sit?").
 const CINEMA_RE = /\b(popcorn|snacks?|concessions?|nachos|candy|soda|seats?|sit together|tickets?)\b/i;
 const SNACKS = [
@@ -599,6 +608,7 @@ export class Table {
     if (this.listening()) { const saved = [...this.savedLines(p, changes, flexSaved), ...flexSaved.lines].slice(0, 4); if (saved.length) { msg.saved = saved; this.note(saved.join('; '), { chat: true }); } }
     if (this.listening() && !p.isAI && IDEA_RE.test(text) && !this.mainHasIdeas()) this.idea(p.key, { auto: false, quiet: true });
     else if (this.task.id === 'movie' && (this.listening() || /@ai\b/i.test(text)) && !p.isAI && CINEMA_RE.test(text)) this.openCinema(p, 'chat');
+    else if (this.task.id === 'potluck' && (this.listening() || /@ai\b/i.test(text)) && !p.isAI && PLATE_RE.test(text)) this.openPlates(p, 'chat');
     else if (this.listening() && PAY_ASK_RE.test(text) && BILLS[this.task.id]) this.openBill(p);
     else if (this.listening() && BOOK_RE.test(text)) this.proposeBooking(RIDE_RE.test(text) ? 'ride' : 'table', p);
     else if (this.listening() && MAP_RE.test(text)) this.showMap(p);
@@ -937,6 +947,7 @@ export class Table {
   // Listening tables only: cards the AI adds on its own when the chat calls for them. One of each per chat.
   autoCards() {
     if (this.style === 'quiet') return; // cards only when someone asks
+    if (this.task.id === 'potluck' && !this.plates && this.panel().find((x) => x.id === 'main')?.status === 'agreed') this.openPlates(null, 'auto');
     if (this.task.id === 'movie' && !this.cinema && ['movie', 'where', 'when'].every((f) => this.panel().find((x) => x.id === f)?.status === 'agreed')) this.openCinema(null, 'auto');
     const field = placeField(this.task);
     if (field && !this.auto.map && !this.maps.length && (this.panel().find((f) => f.id === field)?.options.length || 0) >= 2) {
@@ -1286,6 +1297,98 @@ export class Table {
     this.afterChange();
   }
 
+  // ---------- where people start from, and the best way there for each ----------
+  homeOf(p) {
+    if (p.home) return p.home;
+    const fromFact = this.factsOf(p).map((f) => homeFrom(f.text)).find(Boolean);
+    if (fromFact) return (p.home = fromFact);
+    const used = new Set(this.players.map((x) => x.home?.name).filter(Boolean));
+    this.homeBag = this.homeBag || shuffle(HOMES.filter((h) => h.name !== 'On campus'));
+    const h = this.homeBag.find((x) => !used.has(x.name)) || pickOne(HOMES);
+    return (p.home = h);
+  }
+  hasCar(p) { const f = this.factsOf(p).find((x) => x.id === 'car'); return !!f && /you have a (small )?car/i.test(f.text || '') && !/do not drive at night/i.test(f.text || ''); }
+  travelView(me) {
+    if (!me || !this.task.fields.some((f) => f.id === 'travel')) return null;
+    const pf = placeField(this.task);
+    const h = { ...this.heading(), ...this.plan };
+    const dest = pf && h[pf] ? placeOf(this.task, h[pf]) : null;
+    const people = this.players.map((p) => ({ p, home: this.homeOf(p) }));
+    const drivers = people.filter(({ p }) => this.hasCar(p)).map(({ p, home }) => ({ name: this.nameOf(p), home, code: p.pcode }));
+    const riders = Math.max(1, this.players.filter((p) => (this.prefs[p.pcode]?.travel || h.travel) === 'rideshare').length);
+    const mine = waysFor(this.homeOf(me), dest, drivers.filter((d) => d.code !== me.pcode).concat(this.hasCar(me) ? [{ name: 'you', home: this.homeOf(me) }] : []), riders);
+    let best = null;
+    if (mine) {
+      const opts = [['rideshare', mine.rideshare], ['transit', mine.transit], ...(mine.carpool ? [['carpool', mine.carpool]] : [])];
+      const fastest = Math.min(...opts.map(([, o]) => o.minutes));
+      best = opts.filter(([, o]) => o.minutes <= fastest + 20).sort((a, b) => a[1].cost - b[1].cost)[0][0]; // cheapest within 20 minutes of the fastest
+    }
+    return {
+      dest: dest ? { name: dest.name, lat: dest.lat, lng: dest.lng } : null, me: { home: this.homeOf(me), hasCar: this.hasCar(me), ways: mine, best },
+      people: people.map(({ p, home }) => ({ name: this.nameOf(p), mine: p === me, ai: !!p.isAI, home: { name: home.name, lat: home.lat, lng: home.lng }, car: this.hasCar(p), way: this.prefs[p.pcode]?.travel || null,
+        minutes: dest ? estimate(home, dest).minutes : null }))
+    };
+  }
+
+  // ---------- potluck plates ----------
+  // Each person puts what they would bring on their own plate (up to three dishes). Everyone sees every plate and can
+  // vote for a dish on someone else's plate ("yes, bring that"). The card shows what the table is missing and where two
+  // people would bring the same kind of thing. AI players fill their plates too.
+  openPlates(by, why) {
+    if (this.task.id !== 'potluck' || this.stage !== 'chat') return;
+    if (this.plates) {
+      if (why === 'chat' && Date.now() - (this.plates.postedAt || 0) > sec(60)) { this.plates.postedAt = Date.now(); this.pushChat({ from: 'AI', name: 'AI', kind: 'plates', text: 'Potluck plates' }); this.broadcast(); }
+      return;
+    }
+    this.plates = { on: {}, votes: {}, postedAt: Date.now() };
+    this.log(by?.pcode || 'system', 'plates_opened', { via: why });
+    this.pushChat({ from: 'AI', name: 'AI', kind: 'plates', text: 'Potluck plates' });
+    this.ais().forEach((p, i) => this.later(rand(4, 8) + i * rand(3, 6), () => this.aiPlate(p)));
+    this.broadcast();
+  }
+  aiPlate(p) {
+    const pl = this.plates; if (!pl || this.deal || this.stage !== 'chat') return;
+    const taken = new Set(Object.values(pl.on).flat());
+    const cook = this.factsOf(p).find((f) => f.id === 'cook')?.text || '';
+    const want = FOODS.filter((f) => cook.toLowerCase().includes(f.name.toLowerCase().split(' ')[0]) || (/drinks/i.test(cook) && f.cat === 'Drinks'));
+    const pick = [...want, ...shuffle(FOODS.filter((f) => !taken.has(f.id) && f.cat !== 'Main'))].filter((f) => !taken.has(f.id)).slice(0, Math.random() < 0.5 ? 1 : 2);
+    pl.on[p.pcode] = pick.map((f) => f.id);
+    // and a vote for something a person put on their plate
+    const human = Object.entries(pl.on).find(([c, items]) => !this.byCode(c)?.isAI && items.length);
+    if (human && Math.random() < 0.7) { const k = `${human[0]}:${human[1][0]}`; pl.votes[k] = [...new Set([...(pl.votes[k] || []), p.pcode])]; }
+    this.log(p.pcode, 'plate_set', { items: pl.on[p.pcode], ai_player: true });
+    this.broadcast();
+  }
+  plate(key, action, item, owner) {
+    const p = this.player(key), pl = this.plates;
+    if (!p || p.isAI || !pl || this.deal || this.stage !== 'chat' || !FOODS.some((f) => f.id === item)) return;
+    const mine = (pl.on[p.pcode] = pl.on[p.pcode] || []);
+    if (action === 'add' && !mine.includes(item) && mine.length < 3) mine.push(item);
+    else if (action === 'remove') pl.on[p.pcode] = mine.filter((x) => x !== item);
+    else if (action === 'vote') {
+      const o = this.byCode(String(owner)); if (!o || !(pl.on[o.pcode] || []).includes(item)) return;
+      const k = `${o.pcode}:${item}`, v = new Set(pl.votes[k] || []);
+      if (v.has(p.pcode)) v.delete(p.pcode); else v.add(p.pcode);
+      pl.votes[k] = [...v];
+    } else return;
+    p.actSeq = this.seq;
+    this.log(p.pcode, 'plate_' + action, { item, owner: owner || null });
+    this.broadcast();
+  }
+  platesView(me) {
+    const pl = this.plates; if (!pl) return null;
+    const cats = ['Main', 'Side', 'Dessert', 'Drinks', 'Supplies'];
+    const count = {};
+    for (const items of Object.values(pl.on)) for (const id of items) { const c = FOODS.find((f) => f.id === id).cat; count[c] = (count[c] || 0) + 1; }
+    const dupes = Object.entries(Object.values(pl.on).flat().reduce((a, id) => ({ ...a, [id]: (a[id] || 0) + 1 }), {})).filter(([, n]) => n > 1).map(([id]) => FOODS.find((f) => f.id === id).name);
+    return {
+      foods: FOODS,
+      plates: this.players.map((p) => ({ code: p.pcode, name: this.nameOf(p), mine: !!me && p.pcode === me.pcode, ai: !!p.isAI,
+        items: (pl.on[p.pcode] || []).map((id) => { const v = pl.votes[`${p.pcode}:${id}`] || []; return { id, votes: v.length, myVote: !!me && v.includes(me.pcode), voters: v.map((c) => this.nameOf(this.byCode(c))) }; }) })),
+      coverage: cats.map((c) => ({ cat: c, n: count[c] || 0 })), dupes
+    };
+  }
+
   // ---------- movie tickets and snacks ----------
   // One card for the table: a seat map where each person taps their seat, and a snack menu where each person
   // pre-orders their own snacks. Anyone can book it all once the movie, theater and showtime are set. A demo: nothing
@@ -1319,7 +1422,7 @@ export class Table {
     this.log(p.pcode, 'cinema_seat', { seat, ai_player: true });
     this.broadcast();
   }
-  seat(key, seat) {
+  takeSeat(key, seat) {
     const p = this.player(key), c = this.cinema;
     if (!p || p.isAI || !c || c.booked || this.stage !== 'chat' || !/^[A-G]([1-9]|1[0-2])$/.test(seat)) return;
     if (c.seats[p.pcode] === seat) { delete c.seats[p.pcode]; }
@@ -2293,7 +2396,7 @@ export class Table {
       task: { id: this.task.id, title: this.task.title, short: this.task.short, prompt: this.task.prompt, fields: this.task.fields.map((f) => ({ id: f.id, name: f.name, personal: !!f.personal, kind: fieldKind(this.task, f), options: f.options.map((x) => ({ id: x.id, name: x.name, custom: !!x.custom, by: x.by ? this.nameOf(this.byCode(x.by)) : null })) })),
         info: this.task.info.map((i) => i.text.replace(/^For this game: /, '').replace(/^\w/, (c) => c.toUpperCase())) },
       me: me ? {
-        pcode: me.pcode, name: me.name, ready: me.ready, accepted: !!this.accepts[key], wantsEnd: me.wantsEnd, prefs: this.prefs[me.pcode] || {}, flex: this.flex[me.pcode] || {}, marks: this.avail[me.pcode] || {},
+        pcode: me.pcode, name: me.name, ready: me.ready, accepted: !!this.accepts[key], wantsEnd: me.wantsEnd, prefs: this.prefs[me.pcode] || {}, flex: this.flex[me.pcode] || {}, home: this.task.fields.some((f) => f.id === 'travel') ? (({ name }) => name)(this.homeOf(me)) : null, marks: this.avail[me.pcode] || {},
         facts: this.factsOf(me).map(({ label, text, private: priv }) => ({ label, text, private: !!priv })),
         limit: {
           text: lim.text, say: lim.say, custom: !!me.custom, canSwap: !!me.custom || this.spareLimits().length > 0,
@@ -2326,6 +2429,9 @@ export class Table {
       aiPaused: this.aiPaused, pausedBy: this.pausedBy ? this.byCode(this.pausedBy)?.name : null,
       bookings: this.bookings.map((b) => this.bookingView(b, me)),
       cinema: this.cinemaView(me),
+      plates: this.platesView(me),
+      travel: this.stage === 'chat' || this.stage === 'done' ? this.travelView(me) : null,
+      topic: this.topic && Date.now() - (this.topicAt || 0) < 180000 ? this.topic : null,
       bills: this.bills.map((b) => this.billView(b, me)),
       board: this.boardView(me),
       maps: this.maps.map((m) => ({ ...m, leader: this.choice(m.field) })),
