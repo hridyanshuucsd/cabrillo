@@ -1050,7 +1050,7 @@ table.tables tbody th .muted { white-space: nowrap; }
 /* in-app map: tap a pin */
 .placemap { display: flex; flex-direction: column; gap: 8px; }
 .placemap-map { position: relative; border-radius: 12px; overflow: hidden; }
-.map-big { position: absolute; right: 8px; top: 8px; z-index: 500; min-height: 30px; padding: 0 10px; border-radius: 999px; border: 0; background: rgba(255,255,255,.95); box-shadow: 0 1px 4px rgba(0,0,0,.25); font-weight: 800; font-size: 12.5px; cursor: pointer; }
+.map-big { position: absolute; right: 8px; top: 8px; z-index: 500; min-height: 34px; padding: 0 10px; border-radius: 999px; border: 0; background: rgba(255,255,255,.95); box-shadow: 0 1px 4px rgba(0,0,0,.25); font-weight: 800; font-size: 12.5px; cursor: pointer; }
 .mk.tappable { cursor: pointer; }
 .mk.tappable:hover { transform: scale(1.12); }
 .place-pop { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 12px; background: var(--primary-tint); border: 1px solid var(--primary); }
@@ -1063,11 +1063,11 @@ table.tables tbody th .muted { white-space: nowrap; }
 .icard-wrap .app-more { margin-left: 4px; }
 .card-ai.compact .card-ai-body { gap: 8px; }
 /* movie seats and snacks */
-.seatmap { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 6px; border-radius: 12px; background: #f3f5f6; overflow-x: auto; }
+.seatmap { display: flex; flex-direction: column; align-items: safe center; gap: 3px; padding: 10px 6px; border-radius: 12px; background: #f3f5f6; overflow-x: auto; }
 .screen { width: 80%; text-align: center; font-size: 11px; font-weight: 800; letter-spacing: .08em; color: var(--ink2); border-top: 4px solid #9aa7af; border-radius: 50% 50% 0 0 / 12px 12px 0 0; padding-top: 4px; margin-bottom: 6px; }
 .seatrow { display: flex; align-items: center; gap: 3px; }
 .rowlab { width: 14px; font-size: 11px; font-weight: 800; color: var(--ink2); }
-.seat { width: 22px; height: 20px; border-radius: 5px 5px 3px 3px; border: 1.5px solid #b9c3c9; background: #fff; font-size: 10px; font-weight: 800; color: #fff; padding: 0; cursor: pointer; }
+.seat { width: 30px; height: 30px; flex: none; border-radius: 5px 5px 3px 3px; border: 1.5px solid #b9c3c9; background: #fff; font-size: 12px; font-weight: 800; color: #fff; padding: 0; cursor: pointer; }
 .seat.aisle { margin-right: 10px; }
 .seat.free:hover { border-color: var(--primary); }
 .seat.taken { background: #cfd6da; border-color: #cfd6da; cursor: default; }

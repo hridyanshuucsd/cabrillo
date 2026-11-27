@@ -294,7 +294,7 @@ try {
     await solo.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
   }
   const soloDone = await solo.getByRole('button', { name: 'Accept the plan' }).waitFor({ timeout: 40000 }).then(() => true, () => false);
-  check('AI players go along with the person, so a solo table can reach a full plan', soloDone, soloDone ? '' : await solo.locator('.planbar').innerText());
+  check('AI players go along with the person, so a solo table can reach a full plan', soloDone, soloDone ? '' : `${await solo.locator('.planbar').innerText()} | ${await solo.locator('.actionbar').innerText().catch(() => '')}`); if (!soloDone) await solo.screenshot({ path: 'test-shots/solo_fail.png' });
   await shot(solo, '13_quick_with_ai');
 
   await host.goto(`${BASE}/history`);
