@@ -62,7 +62,10 @@ try {
   check('the AI points to the map when two places are compared, without being asked', await wait(a.getByRole('button', { name: /^Map: details on the board/ })));
   await a.getByRole('button', { name: /^Map: details on the board/ }).first().click();
   const where = (await board(a)).locator('#part-where');
-  check('the board shows the places on a map with directions', await wait(where.locator('.leaflet-container'), 4000) && (await where.getByRole('link', { name: 'Directions' }).count()) >= 4);
+  check('the board shows the places on a map, and "Show the way" draws the way there in the app', await wait(where.locator('.leaflet-container'), 4000) && (await where.getByRole('button', { name: 'Show the way' }).count()) >= 4);
+  await where.getByRole('button', { name: 'Show the way' }).first().click();
+  check('the way there comes with drive and bus times, without leaving the app', await wait(where.getByText(/min by car, about \d+ min by bus/), 2000) && (await where.locator('a[href*="google.com/maps"]').count()) === 0);
+  await where.getByRole('button', { name: 'Hide the way' }).click();
   await a.waitForTimeout(1200);
   await a.screenshot({ path: `${DIR}/01_board_where.png` });
   await shut(a);

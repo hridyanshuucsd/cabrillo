@@ -191,7 +191,7 @@ export function PartWidget({ g, send, id, onMenu }) {
   return (
     <div className="stack" style={{ gap: 8 }}>
       {(f.kind === 'time' || f.kind === 'money') && <AvailGrid g={g} send={send} id={id} />}
-      {f.kind === 'travel' && g.travel ? <TravelCompare g={g} send={send} id={id} /> : f.kind === 'place' ? <PlaceWidget g={g} send={send} id={id} onMenu={onMenu || (() => {})} /> : <Options g={g} send={send} id={id} />}
+      {f.kind === 'travel' && g.travel?.dest ? <TravelCompare g={g} send={send} id={id} /> : f.kind === 'place' ? <PlaceWidget g={g} send={send} id={id} onMenu={onMenu || (() => {})} /> : <Options g={g} send={send} id={id} />}
       {row?.own?.length > 0 && <div className="small muted">Going their own way: {row.own.map((x) => `${x.name} (${x.optionName})`).join(', ')}</div>}
       {f.kind !== 'place' && <AddOption g={g} field={id} placeholder={f.kind === 'time' ? 'Add a time' : 'Add another option'} />}
     </div>
@@ -207,21 +207,24 @@ export function TravelCompare({ g, send, id }) {
   const mine = g.me.prefs[id];
   const pts = [...t.people.map((p) => ({ lat: p.home.lat, lng: p.home.lng, kind: 'place', label: p.name[0], active: p.mine })), ...(t.dest ? [{ ...t.dest, kind: 'dropoff' }] : [])];
   const ways = t.me.ways;
+  const blocked = g.panel.find((f) => f.id === id)?.blocked || {};
   const rows = ways ? ['rideshare', 'carpool', 'transit'].map((k) => ({ k, w: ways[k] })) : [];
   return (
     <div className="travel" role="group" aria-label="Ways to get there">
       <MapView points={pts} height={150} interactive />
       <div className="small">You start from <strong>{t.me.home.name}</strong>{t.me.hasCar ? ' and you have a car' : ''}. {t.dest ? <>Going to <strong>{t.dest.name}</strong>.</> : 'Pick a place to compare the ways there.'}</div>
       {ways && (
-        <div className="ways" role="radiogroup" aria-label="Your way there">
+        <div className="ways" role="group" aria-label="Your way there">
           {rows.map(({ k, w }) => (
-            <button key={k} role="radio" aria-checked={mine === k} disabled={!w || !!g.deal} className={`way ${mine === k ? 'on' : ''} ${t.me.best === k ? 'best' : ''}`}
+            <button key={k} aria-pressed={mine === k} disabled={!w || !!g.deal} className={`way ${mine === k ? 'on' : ''} ${t.me.best === k ? 'best' : ''}`}
+              aria-label={`${WAY_NAME[k]}${w ? `, ${w.minutes} minutes, $${w.cost.toFixed(2)}` : ''}${t.me.best === k ? ', best for you' : ''}${blocked[k]?.length ? `, does not work for ${blocked[k].join(', ')}` : ''}`}
               onClick={() => send('game:pick', { field: id, option: mine === k ? '' : k })}>
               <span className="way-name">{WAY_NAME[k]}{t.me.best === k && <span className="chip ok">Best for you</span>}</span>
               {w ? <span className="way-nums"><strong>{w.minutes} min</strong><span>${w.cost.toFixed(2)}</span></span> : <span className="small muted">Nobody nearby has a car</span>}
               {k === 'carpool' && w && <span className="tiny muted">{w.self ? 'You drive; gas split' : `${w.driver} picks you up; share of gas`}</span>}
               {k === 'rideshare' && w && <span className="tiny muted">Split with others going by rideshare (${w.solo.toFixed(2)} alone)</span>}
               {k === 'transit' && w && <span className="tiny muted">Includes walking and waiting</span>}
+              {blocked[k]?.length > 0 && <span className="opt-warn">Does not work for {blocked[k].join(', ')}</span>}
             </button>
           ))}
         </div>

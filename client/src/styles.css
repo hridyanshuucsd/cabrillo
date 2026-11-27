@@ -1114,3 +1114,4 @@ table.tables tbody th .muted { white-space: nowrap; }
 .focus-empty { padding: 28px 18px; border-radius: 16px; border: 1.5px dashed var(--line2); color: var(--ink2); text-align: center; line-height: 1.45; }
 .focus-rest { align-self: stretch; min-height: 40px; border-radius: 12px; border: 1px solid var(--line2); background: var(--surface); font-weight: 800; cursor: pointer; }
 .card-ref-go { font-size: 12px; font-weight: 700; color: var(--ink2); }
+.limit-line-btn { min-height: 36px; }

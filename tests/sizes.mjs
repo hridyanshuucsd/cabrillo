@@ -132,10 +132,12 @@ for (const task of Object.values(TASKS)) {
       if (!box || box.y + box.height > s.h + 1) chat.push('the message box is off the screen');
       const msgs = await p.evaluate(() => document.querySelector('.messages')?.getBoundingClientRect().height || 0);
       if (msgs < s.h * 0.3) chat.push(`the messages get too little of the screen (${Math.round(msgs)} of ${s.h} px)`);
-      if (!(await p.locator('.actionbar').count())) chat.push('the bar with your limit and Accept is not on the screen');
+      if (!(await p.locator(wide ? '.limit-line' : '.actionbar').count())) chat.push('the bar with your limit and Accept is not on the screen');
       issues.push(...chat.map((x) => `${s.name} ${s.w}x${s.h}, chat: ${x}`));
       // the board: beside the chat on a wide screen, a sheet otherwise
       if (!wide) { await p.getByRole('button', { name: 'Plan board' }).click(); await D.waitFor(); await p.waitForTimeout(300); }
+      // on a wide screen the right side follows the chat; the whole board is under "Rest of the plan"
+      else if (!(await p.locator('.board-col .pboard').count())) { await p.getByRole('button', { name: 'Rest of the plan' }).click(); await p.waitForTimeout(300); }
       const sel = wide ? '.board-col .pboard' : '[role=dialog] .pboard';
       const board = await p.evaluate(audit, sel);
       issues.push(...board.map((x) => `${s.name} ${s.w}x${s.h}, board: ${x}`));
