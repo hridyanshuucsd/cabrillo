@@ -35,7 +35,9 @@ function icon(p) {
 
 // points: [{ lat, lng, kind: 'pickup'|'dropoff'|'place', label, active }]; route: [[lat, lng], ...]; car: { lat, lng, bearing }.
 // A small map in the chat does not take touch input, so it never traps scrolling; the full-screen map does.
-export default function MapView({ points = [], route, car, height = 160, interactive = false, className = '' }) {
+// onPoint: tap a pin (one with an id) to select it, even on a small map; line: [[lat, lng], [lat, lng]] drawn dashed
+// (the way to a selected place, when there is no street route).
+export default function MapView({ points = [], route, car, line, height = 160, interactive = false, onPoint, className = '' }) {
   const el = useRef(null);
   const map = useRef(null);
   const layer = useRef(null);
@@ -58,7 +60,8 @@ export default function MapView({ points = [], route, car, height = 160, interac
   }, [interactive]);
 
   // pins and route
-  const key = JSON.stringify([points, route?.length]);
+  const tap = useRef(onPoint); tap.current = onPoint;
+  const key = JSON.stringify([points, route?.length, line]);
   useEffect(() => {
     const m = map.current; if (!m) return;
     layer.current.clearLayers();
@@ -68,7 +71,13 @@ export default function MapView({ points = [], route, car, height = 160, interac
       L.polyline(route, { color: '#10202b', weight: 4 }).addTo(layer.current);
       all.push(...route);
     }
-    for (const p of points) { L.marker([p.lat, p.lng], { icon: icon(p), keyboard: false, interactive: false }).addTo(layer.current); all.push([p.lat, p.lng]); }
+    if (line?.length === 2) L.polyline(line, { color: '#0b7a6e', weight: 3, dashArray: '6 7' }).addTo(layer.current);
+    for (const p of points) {
+      const live = !!p.id && !!tap.current;
+      const mk = L.marker([p.lat, p.lng], { icon: icon({ ...p, kind: `${p.kind || 'place'}${live ? ' tappable' : ''}` }), keyboard: live, interactive: live, title: live ? p.name : undefined, zIndexOffset: p.active ? 500 : 0 }).addTo(layer.current);
+      if (live) mk.on('click', () => tap.current?.(p));
+      all.push([p.lat, p.lng]);
+    }
     fit.current = () => {
       if (!el.current?.clientWidth) return;
       if (all.length === 1) m.setView(all[0], 14);
@@ -91,14 +100,6 @@ export default function MapView({ points = [], route, car, height = 160, interac
 // Google Maps links: no key needed. These open the real Google Maps app or site.
 export const gmapsDirections = (from, to, mode = 'driving') => `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lng}&destination=${to.lat},${to.lng}&travelmode=${mode}`;
 export const gmapsPlace = (p, q) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q ? `${q} near ${p.lat},${p.lng}` : `${p.lat},${p.lng}`)}`;
-// Hand-offs to the apps people book with. The cards here are demos; these open the real app (or its website) with the
-// trip or the restaurant filled in, so a group can carry the plan over in one tap.
-const ll = (k, p) => `${k}[latitude]=${p.lat}&${k}[longitude]=${p.lng}`;
-export const uberLink = (from, to) => `https://m.uber.com/ul/?action=setPickup&${ll('pickup', from)}&pickup[nickname]=${encodeURIComponent(from.name || 'Pickup')}&${ll('dropoff', to)}&dropoff[nickname]=${encodeURIComponent(to.name || 'Drop-off')}`;
-export const lyftLink = (from, to) => `https://lyft.com/ride?id=lyft&${ll('pickup', from)}&${ll('destination', to)}`;
-export const openTableLink = (name, n) => `https://www.opentable.com/s?term=${encodeURIComponent(`${name} San Diego`)}${n ? `&covers=${n}` : ''}`;
-export const resyLink = (name) => `https://resy.com/cities/san-diego-ca/search?query=${encodeURIComponent(name)}`;
-
 // Position along a route, from 0 (start) to 1 (end), with the heading in degrees.
 export function along(route, t) {
   if (!route?.length) return null;

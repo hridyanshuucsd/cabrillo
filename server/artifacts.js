@@ -48,6 +48,7 @@ const TYPICAL = [
   [/cafe|coffee|brunch|bakery/i, { days: Array(7).fill(H(7, 17)), kind: 'Cafe' }],
   [/\bbar\b|karaoke|escape/i, { days: [H(12, 23), H(16, 23), H(16, 23), H(16, 23), H(16, 24), H(12, 25), H(12, 25)], kind: 'Entertainment' }],
   [/korean|bbq|barbecue|pizza|ramen|taco|mexican|italian|dim sum|restaurant|grill|old town|convoy|hillcrest|little italy|dinner/i, { days: [H(11, 21), H(11, 21), H(11, 21), H(11, 21), H(11, 22), H(11, 22.5), H(11, 22.5)], kind: 'Restaurant' }],
+  [/theater|theatre|imax|cinema/i, { days: Array(7).fill(H(11, 24)), kind: 'Movie theater' }],
   [/arena|observatory|shell|concert|show/i, { days: Array(7).fill(H(17, 23.5)), kind: 'Venue' }],
   [/food bank|shelter|library|tutor/i, { days: [H(10, 16), H(9, 17), H(9, 17), H(9, 17), H(9, 17), H(9, 17), H(9, 15)], kind: 'Organization' }]
 ];
@@ -119,10 +120,10 @@ export function sky(code) {
 // Built from the plan: meet on campus, travel there, the main thing, and the way back. Each stop has a length in
 // minutes; times follow from the start, so moving the start moves the whole day.
 // When the plan names no time: the usual start for that kind of plan.
-const DEFAULT_START = { concert: 19 * 60 + 30, dinner: 19 * 60, gaming: 19 * 60, study: 18 * 60, event: 19 * 60, potluck: 17 * 60, birthday: 19 * 60, anniversary: 18 * 60, volunteer: 10 * 60, cleanup: 9 * 60 };
+const DEFAULT_START = { movie: 19 * 60, concert: 19 * 60 + 30, dinner: 19 * 60, gaming: 19 * 60, study: 18 * 60, event: 19 * 60, potluck: 17 * 60, birthday: 19 * 60, anniversary: 18 * 60, volunteer: 10 * 60, cleanup: 9 * 60 };
 // Plans whose "place" is an area to live in, not somewhere the group goes together: no day, hours or weather.
 export const NO_TRIP = new Set(['housing']);
-const MAIN = { dinner: 90, anniversary: 120, outing: 150, trip: 360, cleanup: 120, concert: 180, volunteer: 180, birthday: 150, potluck: 180, gaming: 180, event: 150, study: 120, moving: 240, hackathon: 24 * 60, sports: 60, meeting: 45, project: 90, housing: 60, roommates: 60, beachhouse: 120 };
+const MAIN = { movie: 150, dinner: 90, anniversary: 120, outing: 150, trip: 360, cleanup: 120, concert: 180, volunteer: 180, birthday: 150, potluck: 180, gaming: 180, event: 150, study: 120, moving: 240, hackathon: 24 * 60, sports: 60, meeting: 45, project: 90, housing: 60, roommates: 60, beachhouse: 120 };
 // legMinutes: the travel time from the route card when there is one, so the chat and the board say the same number.
 export function buildItinerary(task, plan, place, travelName, when, legMinutes) {
   const travel = String(travelName || '').toLowerCase();
@@ -163,6 +164,7 @@ export const BRING = {
   anniversary: [...B('For them', 'Card', 'Flowers', 'Photos for the album')],
   hackathon: [...B('Gear', 'Extension cord', 'Chargers', 'Monitor'), ...B('Fuel', 'Snacks', 'Energy drinks')],
   sports: [...B('Gear', 'Ball', 'Cones', 'Pump'), ...B('Comfort', 'Water', 'First aid kit')],
+  movie: [...B('Bring', 'Tickets on your phone', 'Student ID', 'A hoodie (theaters are cold)')],
   concert: [...B('Bring', 'Tickets on your phone', 'Earplugs', 'Light jacket', 'Snacks for before')],
   roommates: [...B('Shared basics', 'Toilet paper', 'Dish soap', 'Paper towels', 'Cleaning spray', 'Trash bags')],
   dinner: [...B('After', 'Dessert spot ideas')],

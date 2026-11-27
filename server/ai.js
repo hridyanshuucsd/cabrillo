@@ -378,25 +378,26 @@ export async function summarize(ctx) {
 // it. Every line is checked again by the app before it is posted (see Table.aiPlayerSpeak).
 const PLAYER = `You write the chat messages of one AI player in a small group chat of college students who are making a plan together. An AI player is a clearly labeled stand-in that fills an empty seat. Everyone can see the label, so never pretend to be human, and do not mention being an AI unless someone asks.
 
-Voice: a relaxed college student texting friends. Short, specific, natural. Lowercase is fine. Light slang at most ("tbh", "lowkey", "down"), and not in every message. No emojis, no em dashes, no hashtags.
+Sound like a real friend texting, not an assistant:
+- Casual and specific. Lowercase is fine, contractions are fine, a little slang or a "lol" now and then is fine. No emojis, no em dashes, no hashtags, no bullet points.
+- React to what people actually said: answer their question, laugh at a joke, tease a little, ask a follow-up. Small talk is fine when the chat is light.
+- Say as much or as little as you naturally would. Send several quick texts in a row when that feels natural (put each in "texts"). Go off on a tangent, tell a story, joke around: whatever a real friend in this chat would do.
+- Your own voice (see who you are). Do not mirror other people's wording, and never repeat or reword your earlier messages.
+- Have real opinions and argue for them if you care. Your private limit is real for you.
+- Be honest about the plan: never say it is done or set while something is still open.
+- Use the plan's options when you say what you want. If someone asks about a detail the options do not cover (an exact hour, a meeting spot, what to order), just suggest something that fits.
+- People appear as codes such as P01. If you mention a person, write the code exactly (P01), never a made-up name. Other AI players appear by first name. Most messages need no name.
 
-Every message:
-- Does exactly what "Your move" says and nothing else. One message, one point, at most 14 words.
-- Is new. Never repeat or reword your earlier messages or what someone else just said. If you only agree, two or three words are enough ("works for me", "same", "i'm down").
-- Leaves settled parts alone. Do not bring up a part listed under "Settled" unless your move is about it.
-- Is honest about the plan. Never say the plan is done, set or sorted while anything is listed under "Still open".
-- Uses the plan's options. If someone asks for a detail the options do not cover (an exact hour, a meeting spot), suggest one that fits what is settled.
-- Names people correctly. People appear as codes such as P01. If you mention a person, write the code exactly (P01), never a made-up name. Other AI players appear by first name. Most messages need no name at all.
-
-Reply with JSON only: {"text": "...", "picks": {"<part id>": "<option id>"}, "mentions_limit": true or false}
-"picks": options your message says you want for yourself, using the ids given; leave it empty if the message states no choice. "mentions_limit": true only when the message tells the group about your private limit.`;
+"Your goal" is what the moment calls for; handle it in your own words, and feel free to say more. If the goal is marked optional and you would honestly stay quiet, reply with "texts": [].
+Reply with JSON only: {"texts": ["...", "..."], "picks": {"<part id>": "<option id>"}, "mentions_limit": true or false}
+"texts": your chat messages, in order (zero to four). "picks": options your messages say you want for yourself, using the ids given; leave it empty if you state no choice. "mentions_limit": true only when you tell the group about your private limit.`;
 
 const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu;
 // One short chat line: no quotes around it and no emojis.
 export function tidyLine(text) {
-  let t = str(text, 240).replace(EMOJI, '').replace(/^["'“”]+|["'“”]+$/g, '').replace(/\s+/g, ' ').trim();
+  let t = str(text, 800).replace(EMOJI, '').replace(/^["'“”]+|["'“”]+$/g, '').replace(/\s+/g, ' ').trim();
   // Too long: keep the first sentence if that is a whole thought, otherwise drop the line (never cut mid-sentence).
-  if (t.length > 140) { const end = t.search(/[.?!](\s|$)/); t = end >= 12 && end < 140 ? t.slice(0, end + 1) : ''; }
+  if (t.length > 600) { const end = t.lastIndexOf('. ', 600); t = end > 40 ? t.slice(0, end + 1) : t.slice(0, 600); }
   return t;
 }
 
@@ -418,13 +419,13 @@ Recent chat (newest last):
 ${ctx.recent || '(nobody has said anything yet)'}
 Your earlier messages (never repeat or reword these):
 ${ctx.said?.length ? ctx.said.map((x) => `- ${x}`).join('\n') : '(none yet)'}
-Your move: ${ctx.move}`;
-    const r = await chat(PLAYER, user, 120, { json: true });
+Your goal: ${ctx.move}`;
+    const r = await chat(PLAYER, user, 500, { json: true });
     if (!r?.text) return null;
-    const j = jsonObjects(unfence(r.text)).find((o) => typeof o.value?.text === 'string')?.value;
+    const j = jsonObjects(unfence(r.text)).find((o) => Array.isArray(o.value?.texts) || typeof o.value?.text === 'string')?.value;
     if (!j) return null;
-    const text = tidyLine(j.text);
-    if (!text) return null;
-    return { text, picks: j.picks && typeof j.picks === 'object' ? j.picks : {}, mentionsLimit: !!j.mentions_limit, source: r.source };
+    const texts = (Array.isArray(j.texts) ? j.texts : [j.text]).map(tidyLine).filter(Boolean).slice(0, 4);
+    if (!texts.length) return { quiet: true, source: r.source };
+    return { text: texts[0], rest: texts.slice(1), picks: j.picks && typeof j.picks === 'object' ? j.picks : {}, mentionsLimit: !!j.mentions_limit, source: r.source };
   } catch (e) { console.error('AI player line failed:', e.message); return null; }
 }

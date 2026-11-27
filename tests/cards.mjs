@@ -72,12 +72,8 @@ try {
   await say(a, 'let us take a rideshare there');
   await say(c, 'rideshare is fine with me');
   check('the AI prices a ride when the plan says rideshare, without being asked', await wait(a.getByRole('button', { name: /^Ride: details on the board/ })));
-  check('the chat shows a small card, not the whole card', (await a.locator('.messages').getByRole('group', { name: 'Ride to Old Town', exact: true }).count()) === 0
-    && (await a.locator('.messages').getByRole('group', { name: 'Summary: ride to Old Town' }).count()) === 1);
-  const mini = a.locator('.messages').getByRole('group', { name: 'Summary: ride to Old Town' });
-  check('the small ride card hands off to Uber and Lyft with the trip filled in', /^https:\/\/m\.uber\.com\/ul\/\?action=setPickup&pickup\[latitude\]=/.test(await mini.getByRole('link', { name: 'Uber' }).getAttribute('href'))
-    && /^https:\/\/lyft\.com\/ride\?id=lyft&pickup/.test(await mini.getByRole('link', { name: 'Lyft' }).getAttribute('href')));
-  check('the small ride card asks for the private answer with one button', (await mini.getByRole('button', { name: 'Answer privately' }).count()) === 1);
+  const mini = a.locator('.messages').getByRole('group', { name: 'In the chat: ride to Old Town' });
+  check('the ride card works right in the chat: the private answer is there, no other app needed', (await mini.count()) === 1 && (await mini.getByRole('checkbox').count()) > 0 && (await mini.locator('a[href^="http"]').count()) === 0);
   const ride = (p) => p.getByRole('dialog', { name: 'The plan so far' }).getByRole('group', { name: 'Ride to Old Town' });
   for (const p of ps) await board(p);
   check('the board says why the AI added the ride', await wait(ride(a).getByText('The AI added this because the plan says rideshare.'), 3000));
@@ -109,9 +105,8 @@ try {
 
   await say(c, 'can we also reserve a table for lunch');
   check('asking for a table adds a table card to the board', await wait(a.getByRole('button', { name: /^Table booking: details on the board/ })));
-  const miniT = a.locator('.messages').getByRole('group', { name: /^Summary: table at / }).first();
-  check('the small table card hands off to OpenTable and Resy', /^https:\/\/www\.opentable\.com\/s\?term=/.test(await miniT.getByRole('link', { name: 'OpenTable' }).getAttribute('href'))
-    && /^https:\/\/resy\.com\/cities\/san-diego-ca\/search\?query=/.test(await miniT.getByRole('link', { name: 'Resy' }).getAttribute('href')));
+  const miniT = a.locator('.messages').getByRole('group', { name: /^In the chat: table at / }).first();
+  check('the table card works right in the chat, with no links to other apps', (await miniT.count()) === 1 && (await miniT.locator('a[href^="http"]').count()) === 0);
   const tbl = (p) => p.getByRole('dialog', { name: 'The plan so far' }).getByRole('group', { name: /Booking: Table for 3/ });
   for (const p of ps) await board(p);
   await tbl(a).scrollIntoViewIfNeeded(); await a.waitForTimeout(800);

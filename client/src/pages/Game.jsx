@@ -296,17 +296,18 @@ function ChatScreen({ g, send, keyboard, typers, online }) {
               <div className="appbar-sub">{g.kind === 'class' ? `Table ${g.number} · ` : ''}{g.players.length} at the table</div>
             </div>
             {!wide && <button className="btn small" onClick={() => openBoard()}>Plan board</button>}
+            {wide && g.mode === 'listen' && <button className={`ai-status ${g.pausedBy ? 'paused' : ''}`} onClick={() => setSheet({ type: 'ai' })} aria-label="How much the AI chimes in"><span className="dot-live" aria-hidden="true" />{g.pausedBy ? 'AI paused' : `AI · ${STYLE_NAME[g.aiStyle] || 'Light'}`}</button>}
             <button className="btn ghost small" onClick={() => setSheet({ type: 'info' })}>Task</button>
           </div>
         </header>
         {!online && <Offline />}
-        {!keyboard && <Board g={g} open={setSheet} openBoard={openBoard} wide={wide} />}
+        {!keyboard && !wide && <Board g={g} open={setSheet} openBoard={openBoard} wide={wide} />}
         <Messages g={g} send={send} typers={typers} sayMyself={sayMyself} share={share} followUp={() => setAsk('private')} openLimit={() => setSheet({ type: 'limit' })} openField={(id) => setSheet({ type: 'field', id })} openBoard={openBoard} onAccept={onAccept} />
         {!keyboard && <Waiting g={g} openBoard={openBoard} />}
         <div className="dock">
           {toast && !wide && !sheet && <button className="board-toast" onClick={() => { setToast(null); openBoard(); }}><span className="grow">{toast}</span><span className="bt-open">Board</span></button>}
           {!keyboard && <IdeaChip g={g} send={send} />}
-          {!keyboard && <BottomBar g={g} send={send} open={setSheet} humans={humans} />}
+          {!keyboard && (wide ? <LimitLine g={g} open={setSheet} humans={humans} send={send} /> : <BottomBar g={g} send={send} open={setSheet} humans={humans} />)}
           <Composer g={g} send={send} draft={draft} ask={ask} setAsk={setAsk} />
         </div>
       </div>
@@ -485,6 +486,27 @@ function Waiting({ g, openBoard }) {
 }
 
 // Above the message box: your private limit on the left, the plan's progress and Accept on the right.
+// On a laptop: one quiet line for your limit, and the accept button only once there is a plan to accept.
+function LimitLine({ g, open, humans, send }) {
+  const l = g.me.limit;
+  const shared = l.sharedAt !== null, alert = !shared && l.now === 'breaks';
+  const accepted = humans.filter((p) => p.accepted).length;
+  const accept = () => {
+    if (g.me.accepted) return send('game:accept', { value: false });
+    if (l.custom || l.ok === false) return open({ type: 'accept' });
+    send('game:accept', { value: true });
+  };
+  return (
+    <div className="limit-line">
+      <button className={`limit-line-btn ${alert ? 'alert' : ''}`} onClick={() => open({ type: 'limit' })} aria-label="Your private limit">
+        <span className="limit-line-k">{shared ? 'Your limit (shared)' : alert ? 'The plan breaks your limit' : 'Your private limit'}</span>
+        <span className="limit-line-v">{l.text}</span>
+      </button>
+      {!g.deal && g.complete && <button className={`btn small ${g.me.accepted ? 'ghost' : ''}`} onClick={accept}>{g.me.accepted ? `Accepted · ${accepted} of ${humans.length}` : `Accept the plan · ${accepted} of ${humans.length}`}</button>}
+    </div>
+  );
+}
+
 function BottomBar({ g, send, open, humans }) {
   const l = g.me.limit;
   const shared = l.sharedAt !== null;
@@ -578,17 +600,18 @@ function Messages({ g, send, typers, sayMyself, share, onAccept, followUp, openF
     <div className={`messages-wrap ${newBelow ? 'has-new' : ''}`}>
       <div className="messages" ref={box} aria-live="polite" onScroll={(e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; if (atBottom.current) { setNewBelow(0); seenId.current = last?.id || 0; } }}>
         {g.chat.map((m, i) => {
-          // Cards live on the plan board; the chat keeps one line that opens them.
-          if (m.kind === 'booking' || m.kind === 'bill' || m.kind === 'map') {
+          // Cards work right in the chat (the plan board keeps them too). The movie card shows once: the latest one.
+          if (m.kind === 'cinema' && g.chat.some((x) => x.kind === 'cinema' && x.id > m.id)) return null;
+          if (m.kind === 'booking' || m.kind === 'bill' || m.kind === 'map' || m.kind === 'cinema') {
             const bk = m.kind === 'booking' ? (g.bookings || []).find((x) => x.id === m.bookingId) : null;
             const mp = m.kind === 'map' ? (g.maps || []).find((x) => x.id === m.mapId) : null;
             // a map of the options is the board's map of the place part; a route is its own card
             const placePart = g.board?.placeField ? `part-${g.board.placeField}` : null;
-            const target = bk ? `booking-${bk.id}` : m.kind === 'bill' ? `bill-${m.billId}` : mp?.kind === 'route' || !placePart ? `map-${m.mapId}` : placePart;
+            const target = m.kind === 'cinema' ? 'cinema-card' : bk ? `booking-${bk.id}` : m.kind === 'bill' ? `bill-${m.billId}` : mp?.kind === 'route' || !placePart ? `map-${m.mapId}` : placePart;
             return (
               <div key={m.id} className="m-row ai first">
                 <span className="avatar ai" aria-hidden="true">AI</span>
-                <InlineCard m={m} g={g} openBoard={openBoard} target={target} />
+                <InlineCard m={m} g={g} send={send} openBoard={openBoard} target={target} offset={g.clockOffset} />
               </div>
             );
           }

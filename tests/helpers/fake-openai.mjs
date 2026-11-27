@@ -20,7 +20,7 @@ const VARY = ['tbh', 'honestly', 'i think', 'ngl', 'for sure'];
 function playerLine(user) {
   n++;
   if (process.env.FAKE_MODEL === 'bad') return { text: BAD[n % BAD.length], picks: {}, mentions_limit: false };
-  const move = /Your move: (.*)$/s.exec(user)?.[1] || '';
+  const move = /Your (?:move|goal): (.*)$/s.exec(user)?.[1] || '';
   const limit = /Your private limit: "(.*?)"/.exec(user)?.[1] || '';
   const idOf = (name) => new RegExp(`${esc(name)} \\[(\\w+)\\]`).exec(user)?.[1];
   const partOf = (id) => { for (const l of user.split('\n')) { const m = /^- .*? \[(\w+)\]/.exec(l); if (m && l.includes(`[${id}]`) && m[1] !== id) return m[1]; } return null; };
@@ -35,6 +35,10 @@ function playerLine(user) {
   if ((m = /Suggest (.+?) for it/.exec(move))) return { text: `what about ${m[1].toLowerCase()} ${v}?`, picks: pick(m[1]), mentions_limit: false };
   if ((m = /you will go by (.+?) yourself/.exec(move))) return { text: `${limit.charAt(0).toLowerCase()}${limit.slice(1).replace(/\.$/, '')}, so i'll take the ${m[1].toLowerCase()} and meet you there`, picks: pick(m[1]), mentions_limit: true };
   if (/suggested that you go by/.test(move)) return { text: `works for me ${v}, see you there`, picks: {}, mentions_limit: false };
+  if ((m = /Answer with this fact about yourself, in your own words: "(.+?)"/.exec(move))) return { text: `${m[1].charAt(0).toLowerCase()}${m[1].slice(1)}`, picks: {}, mentions_limit: false };
+  if (/^Say hi in two or three words\./.test(move)) return { text: `hey all, ${v}`, picks: {}, mentions_limit: false };
+  if (/has gone quiet for a bit/.test(move)) return { text: `anyone else starving ${v}`, picks: {}, mentions_limit: false };
+  if (/React in a few words/.test(move)) return { text: `${['haha hey', 'yo', 'hiii', 'lol ok', 'oh nice'][n % 5]} ${v}`, picks: {}, mentions_limit: false };
   if (/Agree in two/.test(move)) return { text: `i'm down ${v}`, picks: {}, mentions_limit: false };
   return { text: `yeah fair ${v}`, picks: {}, mentions_limit: false };
 }

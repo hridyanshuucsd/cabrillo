@@ -345,6 +345,29 @@ export const SCENARIOS = {
     ]
   },
 
+  movie: {
+    id: 'movie', title: 'See a movie together', short: 'Movie night',
+    prompt: 'Your friends want to see a movie together this weekend. Agree on the movie, the theater, the showtime, and how you get there. You can pick seats and pre-order snacks once the plan is set.',
+    fields: [
+      { id: 'movie', name: 'Movie', options: [o('starfall', 'Starfall (sci-fi)', ['starfall', 'sci-fi', 'scifi', 'space movie']), o('quiethouse', 'The Quiet House (horror)', ['quiet house', 'horror', 'scary']), o('roommates', 'Roommates Forever (comedy)', ['roommates forever', 'comedy', 'funny one']), o('lanterns', 'Paper Lanterns (animated)', ['paper lanterns', 'animated', 'animation', 'cartoon'])] },
+      { id: 'where', name: 'Theater', options: [o('utc', 'Theater at Westfield UTC', ['utc', 'westfield'], { ticket: 12, place: 'the concession stand at the UTC theater' }), o('delmar', 'Dine-in theater in Del Mar', ['del mar', 'dine-in', 'dine in'], { ticket: 18, place: 'the dine-in theater in Del Mar' }), o('mv', 'IMAX in Mission Valley', ['mission valley', 'imax'], { ticket: 22, place: 'the IMAX theater in Mission Valley' })] },
+      { id: 'when', name: 'Showtime', options: [o('fri7', 'Friday at 7 pm', ['friday at 7', 'friday 7', '7 pm', '7pm']), o('fri10', 'Friday at 10 pm', ['friday at 10', '10 pm', '10pm', 'late show']), o('sat4', 'Saturday at 4 pm', ['saturday', 'sat', 'matinee', '4 pm'])] },
+      TRAVEL,
+      BUDGET_LOW_MID_HIGH(['Under $20', ['under 20', 'under $20', 'cheap', '20 dollars', 'at most 20']], ['$20 to $35', ['$25', '$30', '20 to 35', '$20 to $35']], ['Over $35', ['$40', 'over 35', 'over $35', 'splurge']], [17, 28, 40])
+    ],
+    limits: [
+      L('no_horror', 'Horror movies give you nightmares for days, so you will not see one.', ['horror', 'scary', 'nightmares', 'scared'], (p) => p.movie === 'quiethouse', { movie: 'roommates' }, 'I can\'t do horror, it gives me nightmares for days.'),
+      L('last_bus', 'Your last bus home leaves at 11 pm.', ['last bus', 'bus home', '11 pm', 'too late', 'late show'], (p) => p.when === 'fri10', { when: 'fri7' }, 'My last bus home is at 11, so the 10 pm show is too late for me.'),
+      L('imax_sick', 'IMAX screens make you motion sick.', ['imax', 'motion sick', 'dizzy', 'big screen'], (p) => p.where === 'mv', { where: 'utc' }, 'IMAX makes me motion sick, so a normal screen is better for me.'),
+      L('budget20', 'You can spend at most $20 on the night, snacks included.', ['$20', '20 dollars', 'budget', 'afford', 'broke', 'expensive', 'money'], (p) => p.budget !== 'low', { budget: 'low' }, 'Money is tight, about 20 dollars for everything including snacks.', { maxPerPerson: 20 }),
+      L('sat_shift', 'You work Saturday from noon to 6 pm.', ['work saturday', 'shift', 'working saturday', 'saturday afternoon'], (p) => p.when === 'sat4', { when: 'fri7' }, 'I work Saturday afternoon, so the matinee does not work for me.')
+    ],
+    info: [
+      { kw: ['price', 'cost', '$', 'ticket', 'expensive', 'cheap'], text: 'For this game: tickets are $12 at UTC with a student ID, $18 at the dine-in theater, and $22 for IMAX. Popcorn starts at $6.' },
+      { kw: ['trolley', 'bus', 'transit', 'get to', 'far'], text: 'For this game: UTC is a short bus or trolley ride from campus, Mission Valley is on the trolley line, and Del Mar is easiest by car.' }
+    ]
+  },
+
   housing: {
     id: 'housing', title: 'Choose an apartment for next year', short: 'Next year\'s apartment',
     prompt: 'Your group will live together next year. Agree on what kind of apartment to look for.',

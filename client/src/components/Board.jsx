@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { emit } from '../lib.js';
-import MapView, { gmapsDirections, gmapsPlace } from './MapView.jsx';
-import { MapCard, RideCard, TableCard, BillCard } from './Cards.jsx';
+import MapView from './MapView.jsx';
+import { MapCard, RideCard, TableCard, BillCard, CinemaCard } from './Cards.jsx';
 import { OpeningHours, Itinerary, Weather, Bring, Agreements, Ticket } from './Artifacts.jsx';
 import { Cost, Cars, Chores, Work, PrivatePick, Listings, Truck, Gifts, Roster, Agenda, Study, Shifts, Invite, Reminders } from './Extras.jsx';
 
@@ -126,10 +126,14 @@ function PlaceWidget({ g, send, id, onMenu }) {
   const row = g.panel.find((f) => f.id === id);
   const mine = g.me.prefs[id];
   const places = b.places || [];
-  const pts = [{ ...b.origin, kind: 'pickup' }, ...places.map((p, i) => ({ ...p, kind: 'place', label: i + 1, active: p.id === row?.leader }))];
+  // tap a pin or "Show the way": the place lights up and the way from campus is drawn, with times, right here
+  const [sel, setSel] = useState(null);
+  const s = places.find((p) => p.id === sel);
+  const pts = [{ ...b.origin, kind: 'pickup' }, ...places.map((p, i) => ({ ...p, kind: 'place', label: i + 1, active: p.id === (sel || row?.leader) }))];
   return (
     <div className="stack" style={{ gap: 8 }}>
-      {places.length > 0 && <MapView points={pts} height={190} interactive />}
+      {places.length > 0 && <MapView points={pts} height={190} interactive line={s ? [[b.origin.lat, b.origin.lng], [s.lat, s.lng]] : null} onPoint={(p) => setSel(p.id === sel ? null : p.id)} />}
+      {s && <div className="place-pop small" aria-live="polite"><strong>{s.name}</strong>: {s.minutes} min by car, about {Math.round(s.minutes * 2.2 + 8)} min by bus, {s.miles ?? '?'} mi from campus</div>}
       {places.map((p, i) => {
         const who = row?.options.find((o) => o.option === p.id)?.who || [];
         const no = row?.blocked?.[p.id] || [];
@@ -140,8 +144,7 @@ function PlaceWidget({ g, send, id, onMenu }) {
               <br /><span className="small muted">{p.address ? `${p.address} · ` : ''}{p.minutes} min drive{who.length ? ` · ${who.join(', ')}` : ''}</span>
               {no.length > 0 && <><br /><span className="opt-warn">Does not work for {no.join(', ')}</span></>}
               <span className="place-actions">
-                <a className="small" href={gmapsDirections(b.origin, p)} target="_blank" rel="noreferrer">Directions</a>
-                <a className="small" href={gmapsPlace(p, p.address ? p.name : p.restaurant)} target="_blank" rel="noreferrer">Google Maps</a>
+                <button className="linkbtn small" aria-pressed={sel === p.id} onClick={() => setSel(sel === p.id ? null : p.id)}>{sel === p.id ? 'Hide the way' : 'Show the way'}</button>
                 {p.food && <button className="linkbtn small" onClick={() => onMenu(p.id)}>Menu</button>}
               </span>
             </span>
@@ -377,11 +380,13 @@ export default function PlanBoard({ g, send, onAccept, onClose }) {
       <Invite x={x} act={act} deal={!!g.deal} />
       <Reminders g={g} x={x} act={act} />
       {Object.entries(b.menus || {}).map(([id, m]) => <MenuCard key={id} g={g} send={send} id={id} m={m} />)}
+      {g.cinema && <CinemaCard g={g} send={send} />}
       {cards.length > 0 && <div className="label" id="part-cards" data-nav="Cards" style={{ marginTop: 6 }}>Cards</div>}
       {cards.map((m) => {
         if (m.kind === 'booking') { const bk = (g.bookings || []).find((x) => x.id === m.bookingId); return bk?.kind === 'ride' ? <RideCard key={m.id} b={bk} send={send} offset={g.clockOffset} /> : <TableCard key={m.id} b={bk} send={send} />; }
         if (m.kind === 'bill') return <BillCard key={m.id} b={(g.bills || []).find((x) => x.id === m.billId)} text={m.text} send={send} deal={!!g.deal} />;
-        return <MapCard key={m.id} m={(g.maps || []).find((x) => x.id === m.mapId)} />;
+        if (m.kind === 'cinema') return g.cinema ? <CinemaCard key={m.id} g={g} send={send} /> : null;
+        return <MapCard key={m.id} g={g} send={send} m={(g.maps || []).find((x) => x.id === m.mapId)} />;
       })}
       {blocks.length > 0 && <div className="label" id="part-fromai" data-nav="From the AI" style={{ marginTop: 6 }}>From the AI</div>}
       {blocks.slice(0, 6).map((m) => <div key={m.id} className="pcard"><div className="small muted">{m.text}</div>{m.blocks?.map((bl, k) => <MiniBlock key={k} b={bl} />)}</div>)}

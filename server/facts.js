@@ -88,6 +88,11 @@ export const FACTS = {
     f('skill', 'Your skills', ['skill', 'good at', 'know', 'strong', 'language', 'frontend', 'backend'], ['You are strongest at frontend and design.', 'You are strongest at backend and databases.', 'You have built a few small machine learning projects.', 'You are good at pitching and demos.'], { new_python: 'You only know JavaScript, and you are new to hackathons.' }),
     f('laptop', 'Your laptop', ['laptop', 'mac', 'windows', 'computer'], ['You have a MacBook.', 'You have a new MacBook Pro.', 'You have a Windows gaming laptop.', 'You have a Linux laptop.'], { no_mac: 'You have a Windows laptop, not a Mac.' })
   ],
+  movie: [
+    f('films', 'Movies you like', ['movies', 'watch', 'into', 'genre', 'seen', 'fan'], ['You love sci-fi and anything set in space.', 'You mostly watch comedies.', 'You like animated movies and cry at all of them.', 'You will watch any movie if there is popcorn.']),
+    f('seat', 'Where you like to sit', ['sit', 'seat', 'row', 'front', 'back', 'aisle'], ['You like sitting in the middle, a few rows back.', 'You need an aisle seat.', 'You like the back row.', 'You do not mind where you sit.']),
+    { ...CAR, byLimit: noCar() }
+  ],
   concert: [
     f('music', 'Your music', ['music', 'into', 'fan', 'listen'], ['You love pop music.', 'You are into indie bands.', 'You like jazz and any live music.', 'You mostly listen to hip hop.']),
     { ...CAR, byLimit: { no_car: 'You have a car, but you do not drive at night.' } }

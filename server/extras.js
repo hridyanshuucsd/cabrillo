@@ -32,6 +32,7 @@ export const COSTS = {
     ...(p.what ? [{ label: { dinner: 'Dinner out', party: 'Party snacks and drinks', karaoke: 'Karaoke room', escape: 'Escape room' }[p.what], amount: { dinner: 25, party: 10, karaoke: 15, escape: 35 }[p.what] }] : []),
     ...(p.gift === 'group' ? [{ label: 'Share of the group gift', amount: money(80 / n) }] : p.gift === 'each' ? [{ label: 'Your own gift', amount: 20 }] : [])
   ],
+  movie: (p, n, pl) => [...(p.where ? [{ label: 'Movie ticket', amount: { utc: 12, delmar: 18, mv: 22 }[p.where] || 15 }, { label: 'Snacks, if you get some', amount: 6, optional: true }] : []), ...TRAVEL(p, pl, n)],
   concert: (p, n, pl) => [...(p.show ? [{ label: p.tickets === 'seats' ? 'Reserved seat' : 'Ticket', amount: ({ pop: 90, indie: 30, jazz: 35 }[p.show]) + (p.tickets === 'seats' ? 20 : 0) }] : []), ...TRAVEL(p, pl, n)],
   event: (p, n) => (p.budget ? [{ label: 'Share of the event budget', amount: money(({ free: 0, under50: 50, over50: 150 }[p.budget]) / Math.max(n, 1)) }] : []),
   potluck: (p, n) => [...(p.main ? [{ label: 'Share of the main dish', amount: money(({ turkey: 45, lasagna: 25, tacos: 35 }[p.main]) / n) }] : []), ...(p.drinks === 'front' ? [{ label: 'Share of the drinks', amount: money(30 / n) }] : p.drinks === 'bring' ? [{ label: 'Drinks you bring', amount: 8 }] : [])],
