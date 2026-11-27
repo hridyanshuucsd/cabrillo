@@ -18,3 +18,4 @@ test-shots
 .pagesdb/
 .flexdb
 .lookdb
+.simdb
