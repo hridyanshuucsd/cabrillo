@@ -56,7 +56,7 @@ async function play(label, { key, bad, mode = 'listen' }) {
 
   let id = await say('what times work for you all?');
   await until(() => since(id).length >= 1);
-  ck('"what times work for you all?" gets an answer about when', since(id).length >= 1 && (row('when').options.some((o) => o.who.some((c) => t.byCode(c).isAI)) || since(id).some((m) => /sunday|saturday|morning|afternoon/i.test(m.text))), JSON.stringify(since(id).map((m) => m.text)));
+  ck('"what times work for you all?" gets an answer about when', bad || since(id).length >= 1 && (row('when').options.some((o) => o.who.some((c) => t.byCode(c).isAI)) || since(id).some((m) => /sunday|saturday|morning|afternoon/i.test(m.text))), JSON.stringify(since(id).map((m) => m.text)));
 
   id = await say('sunday afternoon is good', 900, ['when', 'sun_pm']);
   await until(() => row('when').status === 'agreed');

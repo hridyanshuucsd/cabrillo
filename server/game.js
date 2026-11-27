@@ -2136,7 +2136,7 @@ export class Table {
       for (const x of detectOptions(this.task, text).filter((y) => !y.negative)) if (x.field in offer && !lim.violates({ ...this.heading(), ...mine, [x.field]: x.option }) && !stated[x.field]) stated[x.field] = x.option;
       return { picks: { ...(m.picks || {}), ...stated } };
     }
-    if (p.said.some((x) => sameMessage(text, x))) return { why: 'repeats itself' };
+    if ((p.allSaid || p.said).some((x) => sameMessage(text, x))) return { why: 'repeats itself' };
     const recent = this.chat.filter((x) => !x.to && ['chat', 'limit'].includes(x.kind)).slice(-3);
     if (recent.some((x) => x.from !== p.pcode && sameMessage(text, x.text))) return { why: 'echoes the last messages' };
     if (DONE_RE.test(text) && this.panel().some((f) => f.status !== 'agreed')) return { why: 'says the plan is done' };
@@ -2246,7 +2246,7 @@ export class Table {
       Object.assign(mine, picks);
       if (reveal) { p.revealed = true; p.limitSharedAt = this.t; p.limitVia = 'self'; this.log(p.pcode, 'limit_shared', { limit: this.limitId(p), via: 'self', anonymous: false }); }
       p.msgs++; p.lastMsgAt = Date.now();
-      p.said.push(out.text); if (p.said.length > 10) p.said.shift(); (p.saidAll = p.saidAll || new Set()).add(out.text.trim().toLowerCase());
+      p.said.push(out.text); if (p.said.length > 10) p.said.shift(); (p.saidAll = p.saidAll || new Set()).add(out.text.trim().toLowerCase()); (p.allSaid = p.allSaid || []).push(out.text);
       const savedAI = this.listening() ? Object.entries(picks).map(([f, v]) => `${p.short} → ${optionName(this.task, f, v)}`) : [];
       this.pushChat({ from: p.pcode, name: p.name, kind: reveal ? 'limit' : 'chat', text: out.text, ...(said.length ? { sup: said } : {}), ...(savedAI.length ? { saved: savedAI } : {}) });
       this.log(p.pcode, 'chat_message', { text: out.text, length: out.text.length, ai_player: o.reason, move: m.kind, source, picks, ...(dropped ? { model_line_dropped: dropped } : {}) });
@@ -2257,7 +2257,7 @@ export class Table {
         this.typing(p.key);
         await sleep(sec((900 + Math.min(4000, more.length * 40)) / 1000));
         if (this.stage !== 'chat' || this.deal) return;
-        p.msgs++; p.said.push(more); if (p.said.length > 10) p.said.shift(); (p.saidAll = p.saidAll || new Set()).add(more.trim().toLowerCase());
+        p.msgs++; p.said.push(more); if (p.said.length > 10) p.said.shift(); (p.saidAll = p.saidAll || new Set()).add(more.trim().toLowerCase()); (p.allSaid = p.allSaid || []).push(more);
         this.pushChat({ from: p.pcode, name: p.name, kind: 'chat', text: more });
         this.log(p.pcode, 'chat_message', { text: more, length: more.length, ai_player: o.reason, move: m.kind, source, extra_text: true });
         this.afterChange();

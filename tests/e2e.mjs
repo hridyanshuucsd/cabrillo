@@ -290,7 +290,7 @@ try {
   const soloFields = await solo.locator('.pchip:not(.more)').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label').split(':')[0]));
   for (const fl of soloFields) {
     await solo.locator(`.pchip[aria-label^="${fl}:"]`).click();
-    await solo.getByRole('dialog').locator('.opt').first().click();
+    await solo.getByRole('dialog').locator('.opt, .way:not([disabled])').first().click();
     await solo.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
   }
   const soloDone = await solo.getByRole('button', { name: 'Accept the plan' }).waitFor({ timeout: 40000 }).then(() => true, () => false);

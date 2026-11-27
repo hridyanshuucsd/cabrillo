@@ -106,7 +106,9 @@ for (const task of Object.values(TASKS)) {
       const name = f.options.find((o) => o.id === want).name;
       const part = D.locator(`#part-${f.id}`);
       const place = part.locator(`button.place-pick[aria-label="${name}"]`);
+      const way = part.locator(`button.way[aria-label^="${name}"]:not([disabled])`);
       if (await place.count()) await place.click();
+      else if (await way.count()) await way.first().click(); // getting there, compared from your home
       else await part.locator('button.opt', { has: p.locator('.opt-name', { hasText: new RegExp(`^${name.replace(/[$()]/g, '\\$&')}$`) }) }).first().click();
       await p.waitForTimeout(150);
     }
